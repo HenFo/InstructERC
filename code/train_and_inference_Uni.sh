@@ -1,5 +1,5 @@
-source YOUR CONDA ENVS
-source YOUR DOCKER
+source /home/ms/h/hf124135/miniconda3/bin/activate /home/ms/h/hf124135/Dokumente/InstructERC/.conda
+# source YOUR DOCKER
 
 
 # The Shellparameter that controls the mainprocess
@@ -23,8 +23,8 @@ Experiments_setting='lora'
 # select the dataset
 # dataset='test'
 # dataset='iemocap'
-# dataset='meld'
-dataset='EmoryNLP'
+dataset='meld'
+# dataset='EmoryNLP'
 
 # select the historical window for dataset
 # LLaMA 's context = 1024 is enough for almost dataset, except for iemocap.
@@ -33,8 +33,8 @@ dataset='EmoryNLP'
 historical_window=12
 
 # set the accumulation and card when backwarding and inferring
-accumulations=8
-graphics_card=4
+accumulations=16
+graphics_card=2
 BS=$((accumulations * graphics_card))
 
 # parameter that determines whether the speaker_identification task is add to train stage
@@ -106,7 +106,7 @@ esac
 # MAX_LENGTH=1200 
 if [ ${FLAG} = 1 ]
 then
-    DATA_PATH=$(python data_process.py --dataset ${dataset} \
+    DATA_PATH=$(python ./code/data_process.py --dataset ${dataset} \
         --historical_window ${historical_window} \
         --speaker_task ${speaker_task} \
         --domain_base ${domain_base} \
@@ -139,19 +139,19 @@ then
 
     if [ ${MODEL_NAME} = 'ChatGLM' ]
     then
-        MODEL_PATH='CHATGLM MODELPATH'
+        MODEL_PATH='LLM_base/ChatGLM'
     elif [ ${MODEL_NAME} = 'ChatGLM2' ]
     then
-        MODEL_PATH='CHATGLM2 MODELPATH'
+        MODEL_PATH='LLM_base/ChatGLM2'
     elif [ ${MODEL_NAME} = 'LLaMA' ]
     then
-        MODEL_PATH='LLaMA MODELPATH'
+        MODEL_PATH='LLM_base/LLaMA'
     elif [ ${MODEL_NAME} = 'LLaMA2' ]
     then
-        MODEL_PATH='LLaMA2 MODELPATH'
+        MODEL_PATH='meta-llama/Llama-2-7b-chat-hf'
     elif [ ${MODEL_NAME} = 'Bloom-560m' ]    
     then
-        MODEL_PATH='Bloom-560m MODELPATH'
+        MODEL_PATH='LLM_base/Bloom-560m'
     else
         echo -e "Your choose is not in MY candidations! Please check your Model name!"
     fi
@@ -200,7 +200,7 @@ then
         if [ ${speaker_task} = 'True_mixed' ]
         then
             echo "Processed Data_Path: $DATA_PATH"
-            deepspeed --master_port=29500 main_new.py \
+            deepspeed --master_port=29500 ./code/main_new.py \
             --dataset ${dataset} \
             --model_name_or_path ${MODEL_PATH} \
             --data_dir ${DATA_PATH} \
@@ -263,7 +263,7 @@ then
             echo "*********************************************"
             echo "Start to train on Emotion Recognition task!"
             echo "*********************************************"
-            deepspeed --master_port=29500 main_new.py \
+            deepspeed --master_port=29500 ./code/main_new.py \
             --dataset ${dataset} \
             --model_name_or_path ${MODEL_PATH} \
             --data_dir ${DATA_WINDOW_PATH} \
@@ -286,7 +286,7 @@ then
         elif [ ${speaker_task} = 'None' ] && [ ${domain_base} = 'True' ]
         then
             echo "Processed Data_Path: $DATA_PATH"
-            deepspeed --master_port=29500 main_new.py \
+            deepspeed --master_port=29500 ./code/main_new.py \
             --dataset ${dataset} \
             --model_name_or_path ${MODEL_PATH} \
             --data_dir ${DATA_PATH} \
@@ -306,7 +306,7 @@ then
         elif [ ${speaker_task} = 'None' ] && [ ${domain_base} = 'False' ]
         then
             echo "Processed Data_Path: $DATA_PATH"
-            deepspeed --master_port=29500 main_new.py \
+            deepspeed --master_port=29500 ./code/main_new.py \
             --dataset ${dataset} \
             --model_name_or_path ${MODEL_PATH} \
             --data_dir ${DATA_PATH} \
@@ -336,7 +336,7 @@ then
         # fi
         # echo "dataset = ${dataset}, learning_rate = ${LR}"
         echo "Processed Data_Path: $DATA_PATH"
-            deepspeed --master_port=29500 main_new.py \
+            deepspeed --master_port=29500 ./code/main_new.py \
             --dataset ${dataset} \
             --model_name_or_path ${MODEL_PATH} \
             --data_dir ${DATA_PATH} \

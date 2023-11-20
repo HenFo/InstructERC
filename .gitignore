@@ -1,0 +1,6 @@
+**/__pycache__
+LLM_bases/
+InstructERC.code-workspace
+processed_data/**
+output/**
+experiments/**

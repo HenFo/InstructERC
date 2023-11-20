@@ -91,6 +91,13 @@ def report_score(dataset, golds, preds, mode='test'):
     return res, res_matrix     
     
 def match_text(text, word_set_):
+    # Match text spans in word set
+    #
+    # Finds all spans in text that match any word in the provided word set. 
+    # Returns list of matched words.
+    #
+    # text: Input text to match against
+    # word_set_: Set of words to match against text
     if text is None:
         return []
     len_text = len(text)

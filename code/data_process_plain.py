@@ -38,7 +38,7 @@ def process_dataset(dataset):
     content_task_dict = {}
     speaker_task_dict = {}
     sentence_dict = {}
-    data = pickle.load(open(f'YOUR_DATASET_COLLECTIONS_FOR_ERC_PATH/{dataset}/{dataset}.pkl','rb'))
+    data = pickle.load(open(f'original_data/{dataset}/{dataset}.pkl','rb'))
 
     # 不同的数据集有不同的speaker_label的处理方式
     #Different datasets have different ways of handling speaker_label
@@ -121,7 +121,7 @@ def process_dataset(dataset):
             # new_train_id =  speaker_task_dict.keys() + content_dict.keys()
     # dataset_list = ['train', 'test', 'valid']
    
-    data_path = f'YOUR_PLAIN_PROCESSED_DATASET_COLLECTIONS_FOR_ERC_PATH/{dataset}'
+    data_path = f'processed_data/{dataset}'
     os.makedirs(data_path, exist_ok=True)
 
     with open(f'{data_path}/train.json', 'w') as f_train:
