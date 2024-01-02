@@ -1,42 +1,23 @@
 from transformers import (
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    AutoConfig,
-    BertTokenizerFast,
-    T5ForConditionalGeneration,
     LlamaForCausalLM,
     LlamaConfig,
     LlamaTokenizer,
     get_linear_schedule_with_warmup,
-    StoppingCriteriaList
 )
-import pdb
-import torch.nn.functional as F
 import torch
-import torch.nn as nn
 import deepspeed
-from dataclasses import dataclass, asdict
-import pandas as pd
 import json
-import logging
 import math
 import os
 import random
-import re
-import warnings
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, SequentialSampler
 import numpy as np
 from data_utils.data_utils import *
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
-from torch.optim import AdamW, Adam
-from typing import List, Dict
 from peft import LoraConfig, get_peft_model
 import argparse
 from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
-# from colossalai.nn.optimizer import HybridAdam
-# from colossalai.nn.optimizer.zero_optimizer import ZeroOptimizer
-# from colossalai.nn.lr_scheduler import CosineAnnealingWarmupLR
+from tqdm.auto import tqdm
 
 # packages for ERC
 from sklearn import metrics
@@ -49,13 +30,11 @@ def get_labels_attr(dataset):
         'iemocap':['happy', 'sad', 'neutral', 'angry', 'excited', 'frustrated'],
         'meld':['neutral', 'surprise', 'fear', 'sad', 'joyful', 'disgust', 'angry'],
         'EmoryNLP': ['Joyful','Mad','Peaceful', 'Neutral','Sad','Powerful','Scared'],
-        'dialydailog': ['happy', 'neutral', 'angry', 'sad', 'fear', 'surprise','disgust'],
     }
     label_str_set = {
         'iemocap':"'happy', 'sad', 'neutral', 'angry', 'excited', 'frustrated'",
         'meld':"'neutral', 'surprise', 'fear', 'sad', 'joyful', 'disgust', 'angry'",
         'EmoryNLP': "'Joyful','Mad','Peaceful', 'Neutral','Sad','Powerful','Scared'",
-        'dialydailog': "'happy', 'neutral', 'angry', 'sad', 'fear', 'surprise','disgust'",
     }
 
     emotional_label_dict = {text_label:num_label for num_label, text_label in enumerate(label_list_set[dataset])}
@@ -84,9 +63,6 @@ def report_score(dataset, golds, preds, mode='test'):
             res[k] = round(v * 100, 3)
 
     res_matrix = metrics.classification_report(golds, preds, target_names=target_names, digits=digits)
-    # res['matrix'].append(["ACC"])
-    # for i in range(len(target_names)):
-    #     res['matrix'][-1].append("{}: {:.4f}".format(target_names[i], accuracy_score(golds[golds == i], preds[golds == i])))
 
     return res, res_matrix     
     
@@ -487,6 +463,8 @@ deepspeed_config["train_batch_size"] = args.batch_size
 deepspeed_config["gradient_accumulation_steps"] = args.gradient_accumulation_steps
 if deepspeed_config["zero_optimization"]["stage"] == 3:
     deepspeed_config["zero_optimization"]['mics_shard_size'] = world_size
+
+
 def getOptimizerGroup(model):
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
@@ -512,28 +490,28 @@ def getOptimizerGroup(model):
     
     return optimizer_grouped_parameters
 
-def _get_pred_input_dict(batch):
-    # print(batch["input_ids"].shape,batch["labels"].shape,batch["attention_mask"].shape)
-    batch['input_ids'] = batch['input_ids'].unsqueeze(1)
-    batch['labels'] = batch['labels'].unsqueeze(1)
-    batch['attention_mask'] = batch['attention_mask'].unsqueeze(1)
-    batch['type_token_ids'] = batch['type_token_ids'].unsqueeze(1)
-    input_ids, labels, attention_mask, type_token_ids = batch["input_ids"][0], \
-        batch["labels"][0], batch["attention_mask"][0], batch["type_token_ids"][0]
+# def _get_pred_input_dict(batch):
+#     # print(batch["input_ids"].shape,batch["labels"].shape,batch["attention_mask"].shape)
+#     batch['input_ids'] = batch['input_ids'].unsqueeze(1)
+#     batch['labels'] = batch['labels'].unsqueeze(1)
+#     batch['attention_mask'] = batch['attention_mask'].unsqueeze(1)
+#     batch['type_token_ids'] = batch['type_token_ids'].unsqueeze(1)
+#     input_ids, labels, attention_mask, type_token_ids = batch["input_ids"][0], \
+#         batch["labels"][0], batch["attention_mask"][0], batch["type_token_ids"][0]
     
-    pred_input_ids, pred_labels, pred_attention_mask, pred_type_token_ids = batch["input_ids"][1], \
-        batch["labels"][1], batch["attention_mask"][1], batch["type_token_ids"][1]
+#     pred_input_ids, pred_labels, pred_attention_mask, pred_type_token_ids = batch["input_ids"][1], \
+#         batch["labels"][1], batch["attention_mask"][1], batch["type_token_ids"][1]
      
     
-    return {
-        "input_ids": input_ids.to(device),
-        "labels": labels.to(device),
-        "attention_mask": attention_mask.to(device) 
-    },{
-        "input_ids": pred_input_ids.to(device),
-        "labels": pred_labels.to(device),
-        "attention_mask": pred_attention_mask.to(device) 
-    }
+#     return {
+#         "input_ids": input_ids.to(device),
+#         "labels": labels.to(device),
+#         "attention_mask": attention_mask.to(device) 
+#     },{
+#         "input_ids": pred_input_ids.to(device),
+#         "labels": pred_labels.to(device),
+#         "attention_mask": pred_attention_mask.to(device) 
+#     }
 
 def _get_input_dict(batch):
     input_ids, labels, attention_mask, type_token_ids = batch["input_ids"], \
@@ -543,44 +521,16 @@ def _get_input_dict(batch):
         "input_ids": input_ids.to(device),
         "labels": labels.to(device),
         "attention_mask": attention_mask.to(device)
-        
     }
 
-## prepare model
-if "chatglm" in args.model_name_or_path:
-    config = AutoConfig.from_pretrained(args.model_name_or_path, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
-    model = AutoModel.from_pretrained(args.model_name_or_path, trust_remote_code=True).half()
-    deepspeed_config["bfloat16"]["enabled"] = False
-    deepspeed_config["fp16"]["enabled"] = True
-elif "t5" in args.model_name_or_path:
-    config = AutoConfig.from_pretrained(args.model_name_or_path)
-    try:
-        tokenizer = BertTokenizerFast.from_pretrained(args.model_name_or_path)
-    except:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    model = T5ForConditionalGeneration.from_pretrained(args.model_name_or_path)
-    deepspeed_config["bfloat16"]["enabled"] = False
-    deepspeed_config["fp16"]["enabled"] = False
-    args.model_type = "encoder-decoder"
-    deepspeed_config["zero_optimization"]["offload_optimizer"]["device"] = "none"
-else:
-    if "bloom" in args.model_name_or_path or "falcon" in args.model_name_or_path:
-        ## for bloom, falcon
-        config = AutoConfig.from_pretrained(args.model_name_or_path, trust_remote_code=True)
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path, trust_remote_code=True, output_hidden_states=True).half()
-    else:
-        ## for llama, vicuna, belle
-        config = LlamaConfig.from_pretrained(args.model_name_or_path)
-        tokenizer = LlamaTokenizer.from_pretrained(args.model_name_or_path)
-        model = LlamaForCausalLM.from_pretrained(args.model_name_or_path).half()
-        # if args.dataset == 'EmoryNLP':
-        #     deepspeed_config["bfloat16"]["enabled"] = True
-        #     deepspeed_config["fp16"]["enabled"] = False
-        # else:
-        deepspeed_config["bfloat16"]["enabled"] = False
-        deepspeed_config["fp16"]["enabled"] = True
+## prepare LLaMA2 model
+config = LlamaConfig.from_pretrained(args.model_name_or_path)
+tokenizer = LlamaTokenizer.from_pretrained(args.model_name_or_path)
+model = LlamaForCausalLM.from_pretrained(args.model_name_or_path).half()
+
+deepspeed_config["bfloat16"]["enabled"] = True
+deepspeed_config["fp16"]["enabled"] = False
+
 
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token
@@ -595,9 +545,6 @@ if args.lora:
     model = get_peft_model(model, lora_config)
 
 if args.gradient_checkpointing:
-    if "chatglm" in args.model_name_or_path:
-        model.supports_gradient_checkpointing = True
-        model.transformer.gradient_checkpointing = True
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
 
@@ -692,31 +639,15 @@ if __name__ == "__main__":
             model.train()
             batch_iterator = tqdm(
                 train_dataloader,
-                desc=f"Runing epoch{epoch} / {args.num_train_epochs}",
+                desc=f"Running epoch{epoch} / {args.num_train_epochs}",
                 disable=False,
                 mininterval=0,
             )
             for step, batch in enumerate(batch_iterator):
-                if args.emotion_prediction:
-                    # pdb.set_trace()
-
-                    batch = _get_input_dict(batch)
-                    outputs = model(**batch)
-                    # print(outputs.loss, outputs.logits.shape,type(outputs))
-                    # kl_index = torch.tensor(-2)
-                    # res, pre = outputs.logits[:,kl_index,:]
-                    # kl_loss = F.kl_div(res.softmax(dim=-1).log(), pre.softmax(dim=-1), reduction='sum')
-                    # kl_loss = F.kl_div(F.log_softmax(res, dim=-1), F.softmax(pre, dim=-1), reduction='sum')
-                    # print(outputs.loss.shape, kl_loss.shape)
-                    
-                    # loss = outputs.loss + args.theta*kl_loss
-                    loss = outputs.loss
-                    
-                    
-                else:
-                    batch = _get_input_dict(batch)
-                    outputs = model(**batch)
-                    loss = outputs.loss
+               
+                batch = _get_input_dict(batch)
+                outputs = model(**batch)
+                loss = outputs.loss
 
                 model.backward(loss)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
@@ -724,7 +655,7 @@ if __name__ == "__main__":
                     
                 current_loss = loss.item()
                 batch_iterator.set_description(
-                    f"Epochs {epoch}/{args.num_train_epochs}. Running Loss: {current_loss:9.4f}"
+                    f"Epochs {epoch}/{args.num_train_epochs}. Current Loss: {current_loss:9.7f}"
                 )
 
                 if step % args.gradient_accumulation_steps == 0:
@@ -750,32 +681,21 @@ if __name__ == "__main__":
                 eval_inputs_iter.extend(eval_batch["input_ids"])
                 max_length_this_batch = eval_batch["input_ids"].size(-1) if args.model_type == "decoder" else 0
                 with torch.no_grad():
-                    if "chatglm" in args.model_name_or_path:
-                        outputs = model.generate(
-                            **eval_batch,
-                            num_beams=args.num_beams,
-                            # max_length=max_length_this_batch + args.max_length,
-                            max_length=args.max_length,
-                            do_sample=args.do_sample,
-                            top_p=args.top_p,
-                            top_k=args.top_k,
-                        )
-                    else:
-                        if "token_type_ids" in eval_batch:
-                            token_type_ids = eval_batch.pop("token_type_ids")
-                        outputs = model.generate(
-                            **eval_batch,
-                            num_beams=args.num_beams,
-                            top_k=args.top_k,
-                            top_p=args.top_p,
-                            early_stopping=True,
-                            # max_length=max_length_this_batch + args.max_length,
-                            max_length=args.max_length,
-                            length_penalty=2.0,
-                            repetition_penalty=1.0,
-                            num_return_sequences=1
-                            # stopping_criteria=StoppingCriteriaList([stop_criteria]
-                        )
+                    if "token_type_ids" in eval_batch:
+                        token_type_ids = eval_batch.pop("token_type_ids")
+                    outputs = model.generate(
+                        **eval_batch,
+                        num_beams=args.num_beams,
+                        top_k=args.top_k,
+                        top_p=args.top_p,
+                        early_stopping=True,
+                        # max_length=max_length_this_batch + args.max_length,
+                        max_length=args.max_length,
+                        length_penalty=2.0,
+                        repetition_penalty=1.0,
+                        num_return_sequences=1
+                        # stopping_criteria=StoppingCriteriaList([stop_criteria]
+                    )
                 outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
                 all_outputs.extend(outputs)
             eval_inputs_iter = [tokenizer.decode(e_id, skip_special_tokens=True, clean_up_tokenization_spaces=True) for e_id in eval_inputs_iter]
@@ -821,6 +741,7 @@ if __name__ == "__main__":
                 
                 if len(preds) == len(all_answers):
                     score, res_matrix = report_score(dataset=args.dataset, golds=golds, preds=preds)
+                    print(f"##### Evaluation after Epoch {epoch} with F1: {score} #####")
 
                 # statisics of model's output
                 with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
@@ -866,32 +787,21 @@ if __name__ == "__main__":
             eval_inputs_iter.extend(eval_batch["input_ids"])
             max_length_this_batch = eval_batch["input_ids"].size(-1) if args.model_type == "decoder" else 0
             with torch.no_grad():
-                if "chatglm" in args.model_name_or_path:
-                    outputs = model.generate(
-                        **eval_batch,
-                        num_beams=args.num_beams,
-                        # max_length=max_length_this_batch + args.max_length,
-                        max_length=args.max_length,
-                        do_sample=args.do_sample,
-                        top_p=args.top_p,
-                        top_k=args.top_k,
-                    )
-                else:
-                    if "token_type_ids" in eval_batch:
-                        token_type_ids = eval_batch.pop("token_type_ids")
-                    outputs = model.generate(
-                        **eval_batch,
-                        num_beams=args.num_beams,
-                        top_k=args.top_k,
-                        top_p=args.top_p,
-                        early_stopping=True,
-                        # max_length=max_length_this_batch + args.max_length,
-                        max_length=args.max_length,
-                        length_penalty=2.0,
-                        repetition_penalty=1.0,
-                        num_return_sequences=1
-                        # stopping_criteria=StoppingCriteriaList([stop_criteria])
-                    )
+                if "token_type_ids" in eval_batch:
+                    token_type_ids = eval_batch.pop("token_type_ids")
+                outputs = model.generate(
+                    **eval_batch,
+                    num_beams=args.num_beams,
+                    top_k=args.top_k,
+                    top_p=args.top_p,
+                    early_stopping=True,
+                    # max_length=max_length_this_batch + args.max_length,
+                    max_length=args.max_length,
+                    length_penalty=2.0,
+                    repetition_penalty=1.0,
+                    num_return_sequences=1
+                    # stopping_criteria=StoppingCriteriaList([stop_criteria])
+                )
             outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
             all_outputs.extend(outputs)
         eval_inputs_iter = [tokenizer.decode(e_id, skip_special_tokens=True, clean_up_tokenization_spaces=True) for e_id in eval_inputs_iter]

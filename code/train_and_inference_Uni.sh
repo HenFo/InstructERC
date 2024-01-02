@@ -1,4 +1,4 @@
-source /home/ms/h/hf124135/miniconda3/bin/activate /home/ms/h/hf124135/Dokumente/InstructERC/.conda
+
 # source YOUR DOCKER
 
 
@@ -30,10 +30,10 @@ dataset='meld'
 # LLaMA 's context = 1024 is enough for almost dataset, except for iemocap.
 # IEMOCAP has very long conversation sample, 
 # the historical window is designed for this kind of long conversation.
-historical_window=12
+historical_window=20
 
 # set the accumulation and card when backwarding and inferring
-accumulations=16
+accumulations=8
 graphics_card=2
 BS=$((accumulations * graphics_card))
 
@@ -43,7 +43,7 @@ BS=$((accumulations * graphics_card))
 # speaker_task has three options[True, True_mixed, None]
 # speaker_task='True' 
 # speaker_task='True_mixed'
-speaker_task='None'
+speaker_task='True_mixed'
 echo "speaker_task: ${speaker_task}"
 # True means storing the processed data separately (two Stage training)
 # True_mixed means storing the processed data Unifiedly (One stage training)
@@ -58,7 +58,7 @@ echo "domain_base: ${domain_base}"
 # parameter that determines whether the emotion_prediction task is added to train stage, 
 # meanwhile the KL divergence is added to the total loss
 # emotion_prediction='True'
-emotion_prediction='False'
+emotion_prediction='True'
 echo "emotion_prediction: ${emotion_prediction}"
 
 # data_percent=1.0    # 1
@@ -137,21 +137,9 @@ then
     echo "******************************************************************************************"
 
 
-    if [ ${MODEL_NAME} = 'ChatGLM' ]
+    if [ ${MODEL_NAME} = 'LLaMA2' ]
     then
-        MODEL_PATH='LLM_base/ChatGLM'
-    elif [ ${MODEL_NAME} = 'ChatGLM2' ]
-    then
-        MODEL_PATH='LLM_base/ChatGLM2'
-    elif [ ${MODEL_NAME} = 'LLaMA' ]
-    then
-        MODEL_PATH='LLM_base/LLaMA'
-    elif [ ${MODEL_NAME} = 'LLaMA2' ]
-    then
-        MODEL_PATH='meta-llama/Llama-2-7b-chat-hf'
-    elif [ ${MODEL_NAME} = 'Bloom-560m' ]    
-    then
-        MODEL_PATH='LLM_base/Bloom-560m'
+        MODEL_PATH='/home/fock/code/InstructERC/LLM_bases/LLaMA2'
     else
         echo -e "Your choose is not in MY candidations! Please check your Model name!"
     fi
@@ -211,7 +199,7 @@ then
             --gradient_accumulation_steps ${accumulations} \
             --eval_batch_size 8 \
             --num_train_epochs 6 \
-            --save_steps 100000 \
+            --save_steps 1000 \
             --lora ${LORA}\
             --learning_rate ${LR} \
             --do_eval ${DO_EVAL} \
@@ -237,25 +225,25 @@ then
             echo "*********************************************"
             echo "Start to train on Speaker Identification task!"
             echo "*********************************************"
-            # deepspeed --master_port=29500 main_new.py \
-            # --dataset ${dataset} \
-            # --model_name_or_path ${MODEL_PATH} \
-            # --data_dir ${DATA_SPEAKER_PATH} \
-            # --output_dir ${Speaker_Model_output_dir} \
-            # --max_length ${MAX_LENGTH} \
-            # --batch_size ${BS} \
-            # --deepspeed_config ./code/data_utils/deepspeed_config.json \
-            # --gradient_accumulation_steps ${accumulations} \
-            # --eval_batch_size 8 \
-            # --num_train_epochs 3 \
-            # --save_steps 100000 \
-            # --lora ${LORA}\
-            # --learning_rate ${LR} \
-            # --do_train ${DO_TRAIN} \
-            # --do_eval ${DO_EVAL} \
-            # --statistic_mode False
-            # --checkpoint_dir ${CHECKPOINT_DIR} \
-            # --zero_shot ${ZERO_SHOT}
+            deepspeed --master_port=29500 main_new.py \
+            --dataset ${dataset} \
+            --model_name_or_path ${MODEL_PATH} \
+            --data_dir ${DATA_SPEAKER_PATH} \
+            --output_dir ${Speaker_Model_output_dir} \
+            --max_length ${MAX_LENGTH} \
+            --batch_size ${BS} \
+            --deepspeed_config ./code/data_utils/deepspeed_config.json \
+            --gradient_accumulation_steps ${accumulations} \
+            --eval_batch_size 8 \
+            --num_train_epochs 3 \
+            --save_steps 1000 \
+            --lora ${LORA}\
+            --learning_rate ${LR} \
+            --do_train ${DO_TRAIN} \
+            --do_eval ${DO_EVAL} \
+            --statistic_mode False \
+            --checkpoint_dir ${CHECKPOINT_DIR} \
+            --zero_shot ${ZERO_SHOT}
             echo "*******************************************************************"
             echo "Speaker Identification task has been achieved successfully!"
             echo "*******************************************************************"
@@ -274,7 +262,7 @@ then
             --gradient_accumulation_steps ${accumulations} \
             --eval_batch_size 16 \
             --num_train_epochs 15 \
-            --save_steps 100000 \
+            --save_steps 1000 \
             --lora ${LORA}\
             --learning_rate ${LR} \
             --do_train ${DO_TRAIN} \
@@ -297,7 +285,7 @@ then
             --gradient_accumulation_steps ${accumulations} \
             --eval_batch_size 8 \
             --num_train_epochs 8 \
-            --save_steps 100000 \
+            --save_steps 1000 \
             --lora ${LORA}\
             --learning_rate ${LR} \
             --do_eval ${DO_EVAL} \
@@ -317,7 +305,7 @@ then
             --gradient_accumulation_steps ${accumulations} \
             --eval_batch_size 8 \
             --num_train_epochs 6 \
-            --save_steps 100000 \
+            --save_steps 1000 \
             --lora ${LORA}\
             --learning_rate ${LR} \
             --do_eval ${DO_EVAL} \
@@ -330,11 +318,6 @@ then
     elif [ ${emotion_prediction} = 'True' ]
     then
         echo "Now emotion prediction task is added to main task"
-        # if [ ${dataset} = 'EmoryNLP' ]
-        # then
-        #     LR=2e-5
-        # fi
-        # echo "dataset = ${dataset}, learning_rate = ${LR}"
         echo "Processed Data_Path: $DATA_PATH"
             deepspeed --master_port=29500 ./code/main_new.py \
             --dataset ${dataset} \
@@ -347,7 +330,7 @@ then
             --gradient_accumulation_steps ${accumulations} \
             --eval_batch_size 8 \
             --num_train_epochs 15 \
-            --save_steps 100000 \
+            --save_steps 1000 \
             --lora ${LORA}\
             --learning_rate ${LR} \
             --do_eval ${DO_EVAL} \
@@ -356,7 +339,7 @@ then
             --beta 0.1 \
             --theta 1.0 \
             --emotion_prediction True \
-            --checkpoint_dir ./experiments/LLaMA2/lora/${dataset}/True_one 
+            #--checkpoint_dir ./experiments/LLaMA2/lora/${dataset}/True_one 
 
     fi  
 fi

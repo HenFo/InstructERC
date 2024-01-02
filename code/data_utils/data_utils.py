@@ -1,23 +1,14 @@
 import pandas as pd
 import logging
 import os
-from os import truncate
-from typing import List, Optional, Tuple, Union
 
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
-from tqdm.auto import tqdm
 import json
 from dataclasses import dataclass, asdict
-from multiprocessing import Pool
-import multiprocessing
-import math
-from random import sample
-from transformers import (
-    StoppingCriteria,
-    StoppingCriteriaList
-)
+from transformers import StoppingCriteria
+
 
 
 logger = logging.getLogger(__name__)
@@ -73,11 +64,6 @@ class Seq2SeqDataset(Dataset):
         else:
             inputs = list(data["input"])
             inputs = [i.split('***') for i in inputs]
-            # counter = 0
-            # for i in inputs:
-            #     if len(i) != 2:
-            #         counter += 1
-            # print(counter)
             outputs = list(data['output'])
             self.examples = [[i[0], i[1], o] for i, o in zip(inputs, outputs)]
 
@@ -104,7 +90,6 @@ class Seq2SeqCollator(object):
 
 
 def preprocess_data_batch(data, tokenizer, args):
-    
     inputs = [d[0] for d in data]
     inputs_pred = None
     if args.emotion_prediction:
@@ -160,10 +145,10 @@ def preprocess_data_batch(data, tokenizer, args):
                 max_length=args.max_length - 1,
                 truncation=True
             )
-            # 其中，max_length 参数指定了输入文本的最大长度，但是由于 Transformers 模型需要在输入文本的末尾添加一个特殊的结束符 [SEP]，所以实际上输入文本的最大长度应该是 max_length-1。
-            input_pred_ids = inputs_pred['input_ids'] #  从tokenizer结果中取出inputs_ids
-            concate_pred_input = [input_pred_ids[i] + target_ids[i] for i in range(len(input_pred_ids))] # 逐个样本拼接target_ids
-            concate_pred_input = [c_[: args.max_length] for c_ in concate_pred_input] # 按照最大长度进行截断
+            # The max_length parameter specifies the maximum length of the input text, but since Transformers models need to append a special [SEP] token at the end of the input text, the actual maximum length of the input text should be max_length-1.
+            input_pred_ids = inputs_pred['input_ids'] # Get the input_ids from the tokenizer outputs
+            concate_pred_input = [input_pred_ids[i] + target_ids[i] for i in range(len(input_pred_ids))] # Concatenate the target_ids to each sample
+            concate_pred_input = [c_[: args.max_length] for c_ in concate_pred_input] # Truncate to max length
             if not args.open_ended:
                 concate_pred_input = [c_ids + [tokenizer.eos_token_id] for c_ids in concate_pred_input]
 
@@ -199,8 +184,6 @@ def preprocess_data_batch(data, tokenizer, args):
             labels = torch.concat([labels, pred_labels], dim=0)                    
 
 
-        if "chatglm" in args.model_name_or_path and not "chatglm2" in args.model_name_or_path:
-            attention_mask = attention_mask.bool()
         return {
             "input_ids": concat_input,
             "attention_mask": attention_mask,
@@ -239,10 +222,6 @@ def preprocess_data_batch(data, tokenizer, args):
             "type_token_ids": torch.LongTensor(type_token_ids)
         }
 
-# class SHanglinModel(Pretrained):
-#     def __init__(self):
-#         self.model = LlamaModel
-#         self.lm_head = nn.Linear
 
 @dataclass
 class ModelArgs:

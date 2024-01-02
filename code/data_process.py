@@ -6,7 +6,7 @@ import os
 
 
 
-def process_dataset(dataset, window=110, speaker_task='True', demons='False', predictions='True'):
+def process_dataset(dataset, window=110, speaker_task='True', predictions='True'):
     '''
     dataset: parameter that define the evaluated dataset.
     window:       parameter that control the historical context window
@@ -78,8 +78,9 @@ def process_dataset(dataset, window=110, speaker_task='True', demons='False', pr
     for conv_id in all_conv_id:
         for conv_turn in range(len(sentence_dict[conv_id])):
             temp_content_str = 'Now you are expert of sentiment and emotional analysis. '
-            if demons == 'True':
-                temp_content_str += demonstration_short[dataset]
+            # demons provides an example of how to accomplish the task
+            # if demons == 'True':
+            #     temp_content_str += demonstration_short[dataset]
             temp_content_str += 'The following conversation noted between \'### ###\' involves several speakers. ### '
 
             index_w = max(conv_turn-window, 0)
@@ -166,7 +167,7 @@ def process_dataset(dataset, window=110, speaker_task='True', demons='False', pr
                         f_valid.write(json.dumps({'input':f'{speaker_task_dict[valid_id]}','target':f'{speaker_target_dict[valid_id]}'}, ensure_ascii=False)+ '\n')
 
         elif speaker_task == 'True':
-            data_path_speaker = f'processed_data{dataset}/speaker'
+            data_path_speaker = f'processed_data/{dataset}/speaker'
             os.makedirs(data_path_speaker, exist_ok=True)
             with open(f'{data_path_speaker}/train.json', 'w') as f_train:
                 for train_id in new_train_id:
@@ -204,7 +205,7 @@ def process_dataset(dataset, window=110, speaker_task='True', demons='False', pr
             data_path = data_path_speaker + "," +data_path_window         
                         
 
-        elif speaker_task == 'None' and demons == 'False':
+        elif speaker_task == 'None':
             data_path = f'processed_data/{dataset}/window'
             os.makedirs(data_path, exist_ok=True)
 
@@ -220,30 +221,14 @@ def process_dataset(dataset, window=110, speaker_task='True', demons='False', pr
                 for valid_id in new_valid_id:
                     f_valid.write(json.dumps({'input':f'{content_task_dict[valid_id]}','target':f'{content_target_dict[valid_id]}'}, ensure_ascii=False)+ '\n')
         
-        elif speaker_task == 'None' and demons == 'True':
-            data_path = f'processed_data/{dataset}/demon'
-            os.makedirs(data_path, exist_ok=True)
-            
-            with open(f'{data_path}/train.json', 'w') as f_train:
-                for train_id in new_train_id:
-                    f_train.write(json.dumps({'input':f'{content_task_dict[train_id]}','target':f'{content_target_dict[train_id]}'}, ensure_ascii=False)+ '\n')
-
-            with open(f'{data_path}/test.json', 'w') as f_test:
-                for test_id in new_test_id:
-                    f_test.write(json.dumps({'input':f'{content_task_dict[test_id]}','target':f'{content_target_dict[test_id]}'}, ensure_ascii=False)+ '\n')
-
-            with open(f'{data_path}/valid.json', 'w') as f_valid:
-                for valid_id in new_valid_id:
-                    f_valid.write(json.dumps({'input':f'{content_task_dict[valid_id]}','target':f'{content_target_dict[valid_id]}'}, ensure_ascii=False)+ '\n')
     elif predictions == 'True':
-        if speaker_task == 'None' and demons == 'False':
+        if speaker_task == 'None':
             data_path = f'processed_data/{dataset}/predict/window'
-        elif speaker_task == 'None' and demons == 'True':
-            data_path = f'processed_data/{dataset}/predict/demon'
         os.makedirs(data_path, exist_ok=True)
             
         with open(f'{data_path}/train.json', 'w') as f_train:
             for train_id in new_train_id:
+                # splitting is done in the dataset class during traing
                 f_train.write(json.dumps({'input':f'{content_task_dict[train_id]}','target':f'{content_target_dict[train_id]}'}, ensure_ascii=False)+ '\n')
 
         with open(f'{data_path}/test.json', 'w') as f_test:
@@ -257,32 +242,23 @@ def process_dataset(dataset, window=110, speaker_task='True', demons='False', pr
                 f_valid.write(json.dumps({'input':f'{content_task_dict[valid_id]}','target':f'{content_target_dict[valid_id]}'}, ensure_ascii=False)+ '\n')
     return data_path
 
-# def window_process_data():
-#     pass
-
-# def perform_speaker_task():
-#     pass
-
-# def perform_domain_base_task():
-    # pass
-
-def perform_emotion_prediction_task():
-    pass
 
 
 parser = argparse.ArgumentParser(description='Data processing script')
 parser.add_argument('--dataset', type=str, default='iemocap', help='Dataset name or path')
 parser.add_argument('--historical_window', type=int, default=20, help='Historical window size')
 parser.add_argument('--speaker_task', type=str, default='add speaker_task to main task', help='Speaker task type')
-parser.add_argument('--domain_base', type=str, default='select demonstration from domain_base to add to input', help='domain_base mode')
 parser.add_argument('--emotion_prediction', type=str, default='add emotion_prediction to main task', help='Emotion prediction task type')
+parser.add_argument('--domain_base', type=str, default='select demonstration from domain_base to add to input', help='domain_base mode')
 args = parser.parse_args()
+
+# args = argparse.Namespace(dataset='meld', historical_window=20, speaker_task='True_mixed', emotion_prediction='True')
 
 
 
 
 # Process data
-processed_data_path = process_dataset(dataset=args.dataset, window=args.historical_window, speaker_task=args.speaker_task, demons=args.domain_base, predictions=args.emotion_prediction)
+processed_data_path = process_dataset(dataset=args.dataset, window=args.historical_window, speaker_task=args.speaker_task, predictions=args.emotion_prediction)
 
 print(processed_data_path)
 
