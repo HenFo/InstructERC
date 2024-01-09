@@ -60,6 +60,9 @@ echo "domain_base: ${domain_base}"
 emotion_prediction='True'
 echo "emotion_prediction: ${emotion_prediction}"
 
+autoregressive_emotion='False'
+echo "autoregressive_emotion: ${autoregressive_emotion}"
+
 data_percent=1.0    # 1
 # data_percent=0.5    # 1/2
 # data_percent=0.25   # 1/4
@@ -170,6 +173,7 @@ SPEAKER_DATA_PATH=$(python ./code/data_process.py \
     --historical_window ${historical_window} \
     --speaker_task True \
     --emotion_prediction False)
+
 if [ $? -eq 0 ]; then
     echo "******************************************************************************************"
     echo "Data procession has executed successfully !"
@@ -184,7 +188,8 @@ EMOTION_DATA_PATH=$(python ./code/data_process.py \
     --historical_window ${historical_window} \
     --speaker_task None \
     --domain_base ${domain_base} \
-    --emotion_prediction ${emotion_prediction})
+    --emotion_prediction ${emotion_prediction} \
+    --autoregressive_emotion ${autoregressive_emotion} )
 if [ $? -eq 0 ]; then
     echo "******************************************************************************************"
     echo "Data procession has executed successfully !"
@@ -198,6 +203,10 @@ DATA_SPEAKER_PATH=$(echo "$SPEAKER_DATA_PATH" | cut -d ',' -f 1)
 DATA_WINDOW_PATH=$(echo "$EMOTION_DATA_PATH" | cut -d ',' -f 2)
 Speaker_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/${speaker_task}_one
 Content_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/${speaker_task}_two
+if [ ${autoregressive_emotion} = 'True' ]; then
+    Content_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/${speaker_task}_autoregressive_two
+fi
+
 echo "*********************************************"
 echo "DATA_SPEAKER_PATH: $DATA_SPEAKER_PATH"
 echo "*********************************************"
@@ -226,7 +235,7 @@ then
         --gradient_accumulation_steps ${accumulations} \
         --eval_batch_size 8 \
         --num_train_epochs 3 \
-        --save_steps 1000 \
+        --save_steps 10000 \
         --lora ${LORA}\
         --learning_rate ${LR} \
         --do_train ${DO_TRAIN} \
@@ -252,7 +261,7 @@ then
         --gradient_accumulation_steps ${accumulations} \
         --eval_batch_size 16 \
         --num_train_epochs 15 \
-        --save_steps 1000 \
+        --save_steps 5000 \
         --lora ${LORA}\
         --learning_rate ${LR} \
         --do_train ${DO_TRAIN} \
