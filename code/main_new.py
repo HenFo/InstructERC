@@ -2,7 +2,7 @@ from transformers import (
     LlamaForCausalLM,
     LlamaConfig,
     LlamaTokenizer,
-    get_linear_schedule_with_warmup,
+    get_linear_schedule_with_warmup
 )
 import torch
 import deepspeed
@@ -240,11 +240,6 @@ parser.add_argument(
     '--save_steps',
     default=1000, type=int,
 )
-parser.add_argument(
-    "--zero_shot",
-    default=True
-    # action='store_true',
-)
 
 parser.add_argument(
     "--lora",
@@ -423,7 +418,6 @@ model_args = {
     "do_eval": args.do_eval,
     "offload_optimizer": args.offload_optimizer,
     "deepspeed_config": args.deepspeed_config,
-    "zero_shot": args.zero_shot,
     "statistic_mode": args.statistic_mode,
     "mode": args.mode,
     "emotion_prediction": args.emotion_prediction,
@@ -465,7 +459,24 @@ if deepspeed_config["zero_optimization"]["stage"] == 3:
     deepspeed_config["zero_optimization"]['mics_shard_size'] = world_size
 
 
+
 def getOptimizerGroup(model):
+    """
+    Groups the parameters of the model for optimization.
+
+    Puts parameters into two groups:
+    1. Parameters with weight decay applied.
+    2. Parameters without weight decay applied (biases and layernorm weights).
+
+    This allows applying weight decay selectively to avoid decaying biases 
+    and layernorm weights.
+
+    Parameters:
+        model: The model whose parameters will be grouped.
+
+    Returns:
+        A list of parameter groups for optimization.
+    """
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -474,8 +485,7 @@ def getOptimizerGroup(model):
                 if (not any(nd in n
                             for nd in no_decay) and p.requires_grad)
             ],
-            "weight_decay":
-            args.weight_decay,
+            "weight_decay": args.weight_decay,
         },
         {
             "params": [
@@ -483,12 +493,12 @@ def getOptimizerGroup(model):
                 if (any(nd in n
                         for nd in no_decay) and p.requires_grad)
             ],
-            "weight_decay":
-            0.0,
+            "weight_decay": 0.0,
         },
     ]
-    
+
     return optimizer_grouped_parameters
+
 
 # def _get_pred_input_dict(batch):
 #     # print(batch["input_ids"].shape,batch["labels"].shape,batch["attention_mask"].shape)
@@ -522,6 +532,21 @@ def _get_input_dict(batch):
         "labels": labels.to(device),
         "attention_mask": attention_mask.to(device)
     }
+def _get_input_dict_emotion(batch):
+    input_ids, labels, attention_mask, type_token_ids = batch["input_ids"], \
+        batch["labels"], batch["attention_mask"], batch["type_token_ids"]
+    normal =  {
+        "input_ids": input_ids[0::2].to(device),
+        "labels": labels[0::2].to(device),
+        "attention_mask": attention_mask[0::2].to(device)
+    }
+    emotion_pred = {
+        "input_ids": input_ids[1::2].to(device),
+        "labels": labels[1::2].to(device),
+        "attention_mask": attention_mask[1::2].to(device)
+    }
+
+    return normal, emotion_pred
 
 ## prepare LLaMA2 model
 config = LlamaConfig.from_pretrained(args.model_name_or_path)
@@ -549,8 +574,6 @@ if args.gradient_checkpointing:
     model.enable_input_require_grads()
 
 if args.checkpoint_dir is not None:
-    from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
-
     model = load_state_dict_from_zero_checkpoint(model, args.checkpoint_dir)
 
 
@@ -560,21 +583,22 @@ with open(os.path.join(args.output_dir, "model_params.json"), 'w', encoding='utf
 
 ## prepare data
 train_file = os.path.join(args.data_dir, "train.json")
-dev_file = os.path.join(args.data_dir, "test.json")
-if not os.path.exists(dev_file):
-    print("*****    Desire to evaluate, but test.json file not found *****")
-    args.do_eval = False
-train_dataset, dev_dataset = None, None
-train_collator, dev_collator = None, None
+dev_file = os.path.join(args.data_dir, "valid.json")
+test_file = os.path.join(args.data_dir, "test.json")
+
+train_dataset, dev_dataset, test_dataset = None, None, None
+train_collator, dev_collator, test_collator = None, None, None
 if args.do_train:
     df_train = read_data(train_file, percent=args.data_percent, random_seed=args.seed)
     train_dataset = Seq2SeqDataset(args, df_train, mode='train')
     train_collator = Seq2SeqCollator(args, tokenizer, mode="train")
 if args.do_eval:
-    dev_datasets = []
     df_dev = read_data(dev_file, percent=1.0, random_seed=args.seed)
     dev_dataset = Seq2SeqDataset(args, df_dev, mode='dev')
     dev_collator = Seq2SeqCollator(args, tokenizer, mode="dev")
+    df_test = read_data(test_file, percent=1.0, random_seed=args.seed)
+    test_dataset = Seq2SeqDataset(args, df_test, mode='dev')
+    test_collator = Seq2SeqCollator(args, tokenizer, mode="dev")
 
 stop_word_list = ['sep_token_id', 'eos_token_id', 'pad_token_id']
 stop_ids = []
@@ -611,16 +635,16 @@ if args.do_train:
     model = model_engine    
     should_save = True
 elif args.do_eval:
-    if not args.zero_shot:
-        model = load_state_dict_from_zero_checkpoint(model, args.output_dir)
+    os.environ["PATH"] += ":/home/fock/code/.conda/bin"
+    model = load_state_dict_from_zero_checkpoint(model, args.output_dir)
     dtype = torch.half if args.model_type == "decoder" else torch.float32
     model_engine = deepspeed.init_inference(
         model,
-        mp_size=world_size,
+        tensor_parallel={"tp_size": world_size},
         replace_with_kernel_inject=True,
         dtype=dtype,
     )
-    model = model_engine.module
+    model = model_engine
 
 if __name__ == "__main__":
     eval_score_list = []
@@ -644,10 +668,15 @@ if __name__ == "__main__":
                 mininterval=0,
             )
             for step, batch in enumerate(batch_iterator):
-               
-                batch = _get_input_dict(batch)
-                outputs = model(**batch)
-                loss = outputs.loss
+                if args.emotion_prediction:
+                    batch_n, batch_e = _get_input_dict_emotion(batch)
+                    outputs_n = model(**batch_n)
+                    outputs_e = model(**batch_e)
+                    loss = outputs_n.loss + args.beta * outputs_e.loss
+                else:
+                    batch = _get_input_dict(batch)
+                    outputs = model(**batch)
+                    loss = outputs.loss
 
                 model.backward(loss)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
@@ -658,19 +687,18 @@ if __name__ == "__main__":
                     f"Epochs {epoch}/{args.num_train_epochs}. Current Loss: {current_loss:9.7f}"
                 )
 
-                if step % args.gradient_accumulation_steps == 0:
-                    global_steps += 1
-                    should_save = True
-                if global_steps % args.save_steps == 0 and should_save:
-                    model.save_checkpoint(args.output_dir)
-                    should_save = False
+                # if step % args.gradient_accumulation_steps == 0:
+                #     global_steps += 1
+                #     should_save = True
+                # if global_steps % args.save_steps == 0 and should_save:
+                #     model.save_checkpoint(args.output_dir)
+                #     should_save = False
 
-                # model starts to evaluation
-            
+            # model starts evaluation
             model.eval()
             targets = list(df_dev["output"])
-            eval_sampler = SequentialSampler(dev_dataset)
-            eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=eval_sampler, collate_fn=dev_collator, num_workers=8)
+            test_sampler = SequentialSampler(dev_dataset)
+            eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=test_sampler, collate_fn=dev_collator, num_workers=8)
             all_outputs = []
 
             preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval_{epoch}.text")
@@ -691,7 +719,7 @@ if __name__ == "__main__":
                         early_stopping=True,
                         # max_length=max_length_this_batch + args.max_length,
                         max_length=args.max_length,
-                        length_penalty=2.0,
+                        # length_penalty=2.0,
                         repetition_penalty=1.0,
                         num_return_sequences=1
                         # stopping_criteria=StoppingCriteriaList([stop_criteria]
@@ -736,7 +764,6 @@ if __name__ == "__main__":
                         preds += [emotional_label_dict[match_res[0]]]
                     else:
                         preds += [emotional_label_dict[optimize_output(answer, list(emotional_label_dict.keys()))]]
-                        # preds += [confuse_index]
                         confuse_case += [index]
                 
                 if len(preds) == len(all_answers):
@@ -755,7 +782,8 @@ if __name__ == "__main__":
                     tokenizer.save_pretrained(args.output_dir)
                     config.save_pretrained(args.output_dir)
                     args.save(args.output_dir)
-                #     model.save_checkpoint(args.output_dir)
+                    # model.module.save_pretrained(args.output_dir)
+                    model.save_checkpoint(args.output_dir)
                     with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
                         f.write(json.dumps(deepspeed_config, indent=5))
             if args.statistic_mode != 'True':
@@ -764,19 +792,18 @@ if __name__ == "__main__":
                 tokenizer.save_pretrained(args.output_dir)
                 config.save_pretrained(args.output_dir)
                 args.save(args.output_dir)
+                # model.module.save_pretrained(args.output_dir)
                 model.save_checkpoint(args.output_dir)
                 with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
-                    f.write(json.dumps(deepspeed_config, indent=5))
+                    f.write(json.dumps(deepspeed_config, indent=5))     
 
-
-            
 
     if not args.do_train and args.do_eval:
         # model starts to evaluation
         model.eval()
-        targets = list(df_dev["output"])
-        eval_sampler = SequentialSampler(dev_dataset)
-        eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=eval_sampler, collate_fn=dev_collator, num_workers=8)
+        targets = list(df_test["output"])
+        test_sampler = SequentialSampler(test_dataset)
+        eval_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, sampler=test_sampler, collate_fn=test_collator, num_workers=8)
         all_outputs = []
 
         preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval.text")
@@ -797,10 +824,10 @@ if __name__ == "__main__":
                     early_stopping=True,
                     # max_length=max_length_this_batch + args.max_length,
                     max_length=args.max_length,
-                    length_penalty=2.0,
+                    # length_penalty=2.0,
                     repetition_penalty=1.0,
                     num_return_sequences=1
-                    # stopping_criteria=StoppingCriteriaList([stop_criteria])
+                    # stopping_criteria=StoppingCriteriaList([stop_criteria]
                 )
             outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
             all_outputs.extend(outputs)
@@ -841,7 +868,6 @@ if __name__ == "__main__":
             if match_res:
                 preds += [emotional_label_dict[match_res[0]]]
             else:
-                # preds += [confuse_index]
                 preds += [emotional_label_dict[optimize_output(answer, list(emotional_label_dict.keys()))]]
                 confuse_case += [index]
         

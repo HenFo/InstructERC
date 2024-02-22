@@ -14,11 +14,7 @@ MODEL_NAME='LLaMA2'
 # MODEL_NAME='Bloom-560m'
 
 # select the experiment's model
-# Experiments_setting='test'
-# Experiments_setting='zero_shot'
-# Experiments_setting='few_shot'
 Experiments_setting='lora'
-# Experiments_setting='all_parameters'
 
 # select the dataset
 # dataset='iemocap'
@@ -32,7 +28,7 @@ dataset='meld'
 historical_window=20
 
 # set the accumulation and card when backwarding and inferring
-accumulations=8
+accumulations=16
 graphics_card=2
 BS=$((accumulations * graphics_card))
 
@@ -77,7 +73,7 @@ echo "data_percent: ${data_percent}"
 case ${MODEL_NAME} in
 'ChatGLM'|'ChatGLM2'|'LLaMA'|'LLaMA2'|'Bloom-560m')
     case ${Experiments_setting} in
-    'zero_shot'|'few_shot'|'lora'|'all_parameters')
+    'lora'|'all_parameters')
         case ${dataset} in
         'iemocap'|'meld'|'EmoryNLP')
             echo "******************************************************************************************"
@@ -105,21 +101,6 @@ case ${MODEL_NAME} in
     ;;
 esac
 
-# MAX_LENGTH=1200 
-
-# DATA_PATH=$(python ./code/data_process.py --dataset ${dataset} \
-#     --historical_window ${historical_window} \
-#     --speaker_task ${speaker_task} \
-#     --domain_base ${domain_base} \
-#     --emotion_prediction ${emotion_prediction})
-# if [ $? -eq 0 ]; then
-#     echo "******************************************************************************************"
-#     echo "Data procession has executed successfully !"
-#     echo "******************************************************************************************"
-
-# else
-#     echo "Data procession script encountered an error."
-# fi
 
 if [ ${dataset} = 'iemocap' ]    
 then
@@ -152,7 +133,7 @@ then
     DO_EVAL=True
     DO_TRAIN=True
     LORA=True
-    LR=2e-4
+    LR=1e-4
     CHECKPOINT_DIR=None
     echo "Your choose ${Experiments_setting}! The experiment will be set as LORA model"
 elif [ ${Experiments_setting} = 'all_parameters' ]
@@ -236,7 +217,7 @@ then
         --eval_batch_size 8 \
         --num_train_epochs 3 \
         --save_steps 10000 \
-        --lora ${LORA}\
+        --lora ${LORA} \
         --learning_rate ${LR} \
         --do_train ${DO_TRAIN} \
         --do_eval ${DO_EVAL} \
@@ -250,6 +231,7 @@ then
     echo "*********************************************"
     echo "Start to train on Emotion Recognition task!"
     echo "*********************************************"
+
     deepspeed --master_port=29500 ./code/main_new.py \
         --dataset ${dataset} \
         --model_name_or_path ${MODEL_PATH} \
@@ -259,13 +241,35 @@ then
         --batch_size ${BS} \
         --deepspeed_config ./code/data_utils/deepspeed_config.json \
         --gradient_accumulation_steps ${accumulations} \
-        --eval_batch_size 16 \
-        --num_train_epochs 15 \
-        --save_steps 5000 \
-        --lora ${LORA}\
+        --eval_batch_size 8 \
+        --num_train_epochs 8 \
+        --save_steps 100000 \
+        --lora ${LORA} \
+        --lora_dropout 0.1 \
         --learning_rate ${LR} \
-        --do_train ${DO_TRAIN} \
         --do_eval ${DO_EVAL} \
+        --do_train ${DO_TRAIN} \
         --statistic_mode True \
+        --beta 0.1 \
+        --theta 1.0 \
+        --emotion_prediction True \
         --checkpoint_dir ${Speaker_Model_output_dir}
+    
+    
+    echo "*********************************************"
+    echo "Start Evaluation!"
+    echo "*********************************************"
+
+    deepspeed --master_port=29500 ./code/main_new.py \
+        --dataset ${dataset} \
+        --model_name_or_path ${MODEL_PATH} \
+        --data_dir ${DATA_WINDOW_PATH} \
+        --output_dir ${Content_Model_output_dir} \
+        --max_length ${MAX_LENGTH} \
+        --deepspeed_config ${Content_Model_output_dir}/deepspeed_config.json \
+        --lora True \
+        --eval_batch_size 1 \
+        --do_eval True \
+        --do_train False \
+        --statistic_mode True
 fi
