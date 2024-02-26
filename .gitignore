@@ -4,3 +4,4 @@ InstructERC.code-workspace
 processed_data/**
 output/**
 experiments/**
+original_data/**
