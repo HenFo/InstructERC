@@ -8,6 +8,8 @@ from torch.utils.data import Dataset
 import json
 from dataclasses import dataclass, asdict
 from transformers import StoppingCriteria
+from sklearn.utils import class_weight
+import numpy as np
 
 
 
@@ -52,7 +54,8 @@ def get_parameter_number(model):
 
 
 class Seq2SeqDataset(Dataset):
-    def __init__(self, args, data, mode):
+    def __init__(self, args:"ModelArgs", data, mode):
+        self.mode = mode
         if not args.emotion_prediction:
             inputs = list(data["input"])
             outputs = list(data['output'])
@@ -67,11 +70,25 @@ class Seq2SeqDataset(Dataset):
             outputs = list(data['output'])
             self.examples = [[i[0], i[1], o] for i, o in zip(inputs, outputs)]
 
+        outputs = [e[-1] for e in self.examples]
+        labels = list(set(outputs))
+        balancing = "balanced" if args.class_balancing else None
+        class_weights = class_weight.compute_class_weight(balancing, classes=labels, y=outputs)
+        class_weights = class_weights * self.inv_sigmoid(class_weights, alpha = args.class_balancing_alpha)
+        self.class_weights = {l:w for l, w in zip(labels, class_weights)}
+
+    def inv_sigmoid(self, x, alpha=1.0):
+        return 2 - (1 / (0.5 + 0.5*np.exp(-alpha*x)))
+
+
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, index):
-        return self.examples[index]
+        example = self.examples[index]
+        if self.mode == 'dev':
+            return example
+        return example, self.class_weights[example[-1]]
 
 class Seq2SeqCollator(object):
     def __init__(self, args, tokenizer, mode="train"):
@@ -90,11 +107,12 @@ class Seq2SeqCollator(object):
 
 
 def preprocess_data_batch(data, tokenizer, args):
-    inputs = [d[0] for d in data]
+    inputs = [d[0][0] for d in data]
+    batch_sample_weights = [d[1] for d in data]
     inputs_pred = None
     if args.emotion_prediction:
-        inputs_pred = [d[1] for d in data]
-    targets = [d[-1] for d in data]
+        inputs_pred = [d[0][1] for d in data]
+    targets = [d[0][-1] for d in data]
 
     if args.model_type == "decoder":
         if args.mode == "pretrain":
@@ -183,13 +201,13 @@ def preprocess_data_batch(data, tokenizer, args):
             type_token_ids = torch.concat([type_token_ids, pred_type_token_ids], dim=0)
             labels = torch.concat([labels, pred_labels], dim=0)                    
 
-
+        batch_sample_weight = torch.mean(torch.Tensor(batch_sample_weights))
         return {
             "input_ids": concat_input,
             "attention_mask": attention_mask,
             "type_token_ids": type_token_ids,
             "labels": labels,
-            "tradoff": args.beta
+            "sample_weight": batch_sample_weight
         }
     else:
         ## encoder-decoder model
@@ -262,6 +280,8 @@ class ModelArgs:
     zero_shot: bool = False
     mode: str = "sft"
     gradient_checkpointing: bool = False
+    class_balancing: bool = False
+    class_balancing_alpha: float = 0.2
 
     def save(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)

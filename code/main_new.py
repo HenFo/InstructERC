@@ -350,6 +350,17 @@ parser.add_argument(
     help='hyperparameter that determining the KL divergency weights participating in the final loss'
 )
 
+parser.add_argument(
+    "--class_balancing",
+    default=False
+)
+
+parser.add_argument(
+    "--class_balancing_alpha",
+    default=0.0,
+    help="reduce distance between class weights"
+)
+
 args = parser.parse_args()
 do_sample = args.top_k is not None or args.top_p is not None or args.num_beams > 1 or args.temp is not None
 '''
@@ -424,7 +435,9 @@ model_args = {
     "beta": args.beta,
     "theta": args.theta,
     "gradient_checkpointing": args.gradient_checkpointing,
-    "data_percent": args.data_percent
+    "data_percent": args.data_percent,
+    "class_balancing": args.class_balancing,
+    "class_balancing_alpha": args.class_balancing_alpha
 }
 args = ModelArgs()
 # pdb.set_trace()
