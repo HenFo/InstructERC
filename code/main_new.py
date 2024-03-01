@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, SequentialSampler
 import numpy as np
 from data_utils.data_utils import *
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, PeftModel
 import argparse
 from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
 from tqdm.auto import tqdm
@@ -551,7 +551,8 @@ def _get_input_dict_emotion(batch):
 ## prepare LLaMA2 model
 config = LlamaConfig.from_pretrained(args.model_name_or_path)
 tokenizer = LlamaTokenizer.from_pretrained(args.model_name_or_path)
-model = LlamaForCausalLM.from_pretrained(args.model_name_or_path).half()
+print("***** Load Base Model *****")
+model = LlamaForCausalLM.from_pretrained(args.model_name_or_path, device_map="cpu").half()
 
 deepspeed_config["bfloat16"]["enabled"] = True
 deepspeed_config["fp16"]["enabled"] = False
@@ -566,16 +567,24 @@ if tokenizer.eos_token is None:
 if args.model_type == "decoder":
     tokenizer.padding_side = "left"
 
+# if lora is used and a checkpoint is provided, load the lora model from the checkpoint
+# otherwise, initialize a new lora model if it should be trained
+# if the model should not be trained, the model is loaded later for evaluation
 if args.lora:
-    model = get_peft_model(model, lora_config)
+    if args.checkpoint_dir is not None:
+        print("***** Load Peft Checkpoint *****")
+        model = PeftModel.from_pretrained(model, args.checkpoint_dir, is_trainable=args.do_train,  device_map="cpu")
+    elif args.do_train:
+        print("***** Create new Peft Model *****")
+        model = get_peft_model(model, lora_config)
 
 if args.gradient_checkpointing:
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
 
-if args.checkpoint_dir is not None:
-    model = load_state_dict_from_zero_checkpoint(model, args.checkpoint_dir)
-
+# if args.checkpoint_dir is not None and:
+#     # model = load_state_dict_from_zero_checkpoint(model, args.checkpoint_dir)
+#     model = 
 
 num_parameters = get_parameter_number(model)
 with open(os.path.join(args.output_dir, "model_params.json"), 'w', encoding='utf-8') as f:
@@ -608,6 +617,7 @@ for stop_word in stop_word_list:
         stop_ids.append(id_)
 stop_criteria = KeywordsStoppingCriteria(stop_ids)
 ## prepare deepspeed model training
+os.environ["PATH"] += ":/home/fock/code/.conda/bin"
 if args.do_train:
     t_total = math.ceil(len(train_dataset) / args.batch_size) * args.num_train_epochs
     warmup_steps = math.ceil(t_total * args.warmup_ratio) if args.warmup_steps is None else args.warmup_steps
@@ -635,14 +645,14 @@ if args.do_train:
     model = model_engine    
     should_save = True
 elif args.do_eval:
-    os.environ["PATH"] += ":/home/fock/code/.conda/bin"
-    model = load_state_dict_from_zero_checkpoint(model, args.output_dir)
-    dtype = torch.half if args.model_type == "decoder" else torch.float32
+    print("***** Load Peft Model for evaluation *****")
+    model = PeftModel.from_pretrained(model, args.output_dir, device_map="cpu")
+    model.merge_and_unload(progressbar=True)
     model_engine = deepspeed.init_inference(
         model,
         tensor_parallel={"tp_size": world_size},
         replace_with_kernel_inject=True,
-        dtype=dtype,
+        dtype=torch.half,
     )
     model = model_engine
 
@@ -670,9 +680,10 @@ if __name__ == "__main__":
             for step, batch in enumerate(batch_iterator):
                 if args.emotion_prediction:
                     batch_n, batch_e = _get_input_dict_emotion(batch)
+                    sample_weights = batch["sample_weight"]
                     outputs_n = model(**batch_n)
                     outputs_e = model(**batch_e)
-                    loss = outputs_n.loss + args.beta * outputs_e.loss
+                    loss = outputs_n.loss * sample_weights + args.beta * outputs_e.loss * sample_weights
                 else:
                     batch = _get_input_dict(batch)
                     outputs = model(**batch)
@@ -782,8 +793,8 @@ if __name__ == "__main__":
                     tokenizer.save_pretrained(args.output_dir)
                     config.save_pretrained(args.output_dir)
                     args.save(args.output_dir)
-                    # model.module.save_pretrained(args.output_dir)
-                    model.save_checkpoint(args.output_dir)
+                    model.module.save_pretrained(args.output_dir)
+                    # model.save_checkpoint(args.output_dir)
                     with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
                         f.write(json.dumps(deepspeed_config, indent=5))
             if args.statistic_mode != 'True':
@@ -792,8 +803,8 @@ if __name__ == "__main__":
                 tokenizer.save_pretrained(args.output_dir)
                 config.save_pretrained(args.output_dir)
                 args.save(args.output_dir)
-                # model.module.save_pretrained(args.output_dir)
-                model.save_checkpoint(args.output_dir)
+                model.module.save_pretrained(args.output_dir)
+                # model.save_checkpoint(args.output_dir)
                 with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
                     f.write(json.dumps(deepspeed_config, indent=5))     
 
