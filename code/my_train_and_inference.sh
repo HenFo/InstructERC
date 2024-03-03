@@ -133,6 +133,8 @@ then
     DO_EVAL=True
     DO_TRAIN=True
     LORA=True
+    LORA_DROP=0.05
+    LORA_RANK=8
     LR=1e-4
     CHECKPOINT_DIR=None
     echo "Your choose ${Experiments_setting}! The experiment will be set as LORA model"
@@ -148,8 +150,10 @@ else
     echo "Your choose is not in MY candidations! Please CHECK your Experiments Setting!"
 fi
 
-
-SPEAKER_DATA_PATH=$(python ./code/data_process.py \
+echo "******************************************************************************************"
+echo "Process data"
+echo "******************************************************************************************"
+SPEAKER_DATA_PATH=$(python ./code/process_meld.py \
     --dataset ${dataset} \
     --historical_window ${historical_window} \
     --speaker_task True \
@@ -164,11 +168,10 @@ else
     echo "Data procession script encountered an error."
 fi
 
-EMOTION_DATA_PATH=$(python ./code/data_process.py \
+EMOTION_DATA_PATH=$(python ./code/process_meld.py \
     --dataset ${dataset} \
     --historical_window ${historical_window} \
     --speaker_task None \
-    --domain_base ${domain_base} \
     --emotion_prediction ${emotion_prediction} \
     --autoregressive_emotion ${autoregressive_emotion} )
 if [ $? -eq 0 ]; then
@@ -182,8 +185,8 @@ fi
 
 DATA_SPEAKER_PATH=$(echo "$SPEAKER_DATA_PATH" | cut -d ',' -f 1)
 DATA_WINDOW_PATH=$(echo "$EMOTION_DATA_PATH" | cut -d ',' -f 2)
-Speaker_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/${speaker_task}_one
-Content_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/${speaker_task}_two
+Speaker_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}_${LORA_RANK}/${dataset}/${speaker_task}_one
+Content_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}_${LORA_RANK}/${dataset}/${speaker_task}_two
 if [ ${autoregressive_emotion} = 'True' ]; then
     Content_Model_output_dir=./experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/${speaker_task}_autoregressive_two
 fi
@@ -218,6 +221,7 @@ then
         --num_train_epochs 3 \
         --save_steps 10000 \
         --lora ${LORA} \
+        --lora_dim ${LORA_RANK} \
         --learning_rate ${LR} \
         --do_train ${DO_TRAIN} \
         --do_eval ${DO_EVAL} \
@@ -245,7 +249,8 @@ then
         --num_train_epochs 8 \
         --save_steps 100000 \
         --lora ${LORA} \
-        --lora_dropout 0.1 \
+        --lora_dropout ${LORA_DROP} \
+        --lora_dim ${LORA_RANK} \
         --learning_rate ${LR} \
         --do_eval ${DO_EVAL} \
         --do_train ${DO_TRAIN} \
