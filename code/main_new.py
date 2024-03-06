@@ -56,75 +56,24 @@ def report_score(dataset, golds, preds, mode='test'):
 
     res = {}
     res['Acc_SA'] = accuracy_score(golds, preds)
-    res['F1_SA'] = f1_score(golds, preds, average='weighted')
+    res['F1_SA'] = f1_score(golds, preds, average='weighted', labels=target_names)
     res['mode'] = mode
     for k, v in res.items():
         if isinstance(v, float):
             res[k] = round(v * 100, 3)
 
-    res_matrix = metrics.classification_report(golds, preds, target_names=target_names, digits=digits)
+    res_matrix = metrics.classification_report(golds, preds, labels=target_names, digits=digits, zero_division=0.0)
 
     return res, res_matrix     
-    
-def match_text(text, word_set_):
-    # Match text spans in word set
-    #
-    # Finds all spans in text that match any word in the provided word set. 
-    # Returns list of matched words.
-    #
-    # text: Input text to match against
-    # word_set_: Set of words to match against text
-    if text is None:
-        return []
-    len_text = len(text)
-    s_idx = 0
-    match_res = []
-    while s_idx < len_text:
-        cache = []
-        span_length = 1
-        while span_length < 12 and s_idx + span_length <= len_text:
-            span = text[s_idx: s_idx + span_length]
-            if span in word_set_:
-                cache.append(span)
-            span_length += 1
-        if len(cache) > 0:
-            match_res.append(cache[-1])
-            s_idx += len(cache[-1])
-        else:
-            s_idx += 1
-    return match_res
 
-
-def edit_distance(s1, s2):
-    """
-    Calculate the editing distance between two strings
-    """
-    m, n = len(s1), len(s2)
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-    for i in range(m + 1):
-        dp[i][0] = i
-    for j in range(n + 1):
-        dp[0][j] = j
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if s1[i - 1] == s2[j - 1]:
-                dp[i][j] = dp[i - 1][j - 1]
-            else:
-                dp[i][j] = min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]) + 1
-    return dp[m][n]
-
-def optimize_output(output, label_set):
-    """
-    Calculate output and label_ Set the editing distance of each label in the set and return the label corresponding to the minimum editing distance
-    """
-    min_distance = float('inf')
-    optimized_output = None
-    for label in label_set:
-        distance = edit_distance(output, label)
-        if distance < min_distance:
-            min_distance = distance
-            optimized_output = label
-    return optimized_output
+def save_model(model, tokenizer, config, args, deepspeed_config): 
+    tokenizer.save_pretrained(args.output_dir)
+    config.save_pretrained(args.output_dir)
+    args.save(args.output_dir)
+    model.module.save_pretrained(args.output_dir)
+    # model.save_checkpoint(args.output_dir)
+    with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
+        f.write(json.dumps(deepspeed_config, indent=5))
 
 
 device = torch.device("cuda")
@@ -711,18 +660,11 @@ if __name__ == "__main__":
                     f"Epochs {epoch}/{args.num_train_epochs}. Current Loss: {current_loss:9.7f}"
                 )
 
-                # if step % args.gradient_accumulation_steps == 0:
-                #     global_steps += 1
-                #     should_save = True
-                # if global_steps % args.save_steps == 0 and should_save:
-                #     model.save_checkpoint(args.output_dir)
-                #     should_save = False
-
             # model starts evaluation
             model.eval()
             targets = list(df_dev["output"])
-            test_sampler = SequentialSampler(dev_dataset)
-            eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=test_sampler, collate_fn=dev_collator, num_workers=8)
+            eval_sampler = SequentialSampler(dev_dataset)
+            eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=eval_sampler, collate_fn=dev_collator, num_workers=8)
             all_outputs = []
 
             preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval_{epoch}.text")
@@ -731,95 +673,46 @@ if __name__ == "__main__":
             for eval_step, eval_batch in enumerate(tqdm(eval_dataloader)):
                 eval_batch = eval_batch.to(device)
                 eval_inputs_iter.extend(eval_batch["input_ids"])
-                max_length_this_batch = eval_batch["input_ids"].size(-1) if args.model_type == "decoder" else 0
                 with torch.no_grad():
-                    if "token_type_ids" in eval_batch:
-                        token_type_ids = eval_batch.pop("token_type_ids")
                     outputs = model.generate(
                         **eval_batch,
-                        num_beams=args.num_beams,
-                        top_k=args.top_k,
-                        top_p=args.top_p,
-                        early_stopping=True,
-                        # max_length=max_length_this_batch + args.max_length,
                         max_length=args.max_length,
-                        # length_penalty=2.0,
-                        repetition_penalty=1.0,
-                        num_return_sequences=1
-                        # stopping_criteria=StoppingCriteriaList([stop_criteria]
                     )
                 outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
                 all_outputs.extend(outputs)
-            eval_inputs_iter = [tokenizer.decode(e_id, skip_special_tokens=True, clean_up_tokenization_spaces=True) for e_id in eval_inputs_iter]
+            ins = tokenizer.batch_decode(eval_inputs_iter, skip_special_tokens=True, clean_up_tokenization_spaces=True)
             # all_outputs
-            outs = [tokenizer.decode(o_id, skip_special_tokens=True, clean_up_tokenization_spaces=True) for o_id in all_outputs]
+            outs = tokenizer.batch_decode(all_outputs, skip_special_tokens=True, clean_up_tokenization_spaces=True)
             preds_for_eval = []
-            all_answers = []
-            for index, o in enumerate(outs):
-                this_input = eval_inputs_iter[index]
-                if args.model_type == "decoder":
-                    if this_input in o:
-                        answer = o.replace(this_input, "").strip().rstrip()
-                    else:
-                        output_ids = all_outputs[index][args.max_seq_length: ]
-                        answer = tokenizer.decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                else:
-                    answer = o
-                answer = answer.strip().rstrip()
-                all_answers.append(answer)
+            all_answers = [output.replace(prompt, "").strip() for prompt, output in zip(ins, outs)]
 
+            for index, (input_prompt, answer) in enumerate(zip(ins, all_answers)):
                 this_eval_instance = {
                     "index": index,
-                    "input": this_input,
+                    "input": input_prompt,
                     "output": answer, 
                     "target": targets[index],
                 }
                 preds_for_eval.append(this_eval_instance)
             if args.statistic_mode == "True":
-                preds = []
-                golds = []
-                # confuse_index = len(emotional_label_dict)
-                # bad_case = []
-                confuse_case = []
-                for index, answer in enumerate(all_answers):
-                    golds += [emotional_label_dict[targets[index]]]
-                    match_res = match_text(answer, list(emotional_label_dict.keys()))
-                    if match_res:
-                        preds += [emotional_label_dict[match_res[0]]]
-                    else:
-                        preds += [emotional_label_dict[optimize_output(answer, list(emotional_label_dict.keys()))]]
-                        confuse_case += [index]
-                
-                if len(preds) == len(all_answers):
-                    score, res_matrix = report_score(dataset=args.dataset, golds=golds, preds=preds)
-                    print(f"##### Evaluation after Epoch {epoch} with F1: {score} #####")
+
+                score, res_matrix = report_score(dataset=args.dataset, golds=targets, preds=all_answers)
+                print(f"##### Evaluation after Epoch {epoch} with F1: {score} #####")
 
                 # statisics of model's output
                 with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(score))
                     f.write(f'\n{res_matrix}')
-                    f.write(f'\nconfuse_case:{confuse_case} \n\n')
                     f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
 
                 if best_f1_score < score['F1_SA']:
                     best_f1_score = score['F1_SA']
-                    tokenizer.save_pretrained(args.output_dir)
-                    config.save_pretrained(args.output_dir)
-                    args.save(args.output_dir)
-                    model.module.save_pretrained(args.output_dir)
-                    # model.save_checkpoint(args.output_dir)
-                    with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
-                        f.write(json.dumps(deepspeed_config, indent=5))
+                    save_model(model, tokenizer, config, args, deepspeed_config)
+            
             if args.statistic_mode != 'True':
                 with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
-                tokenizer.save_pretrained(args.output_dir)
-                config.save_pretrained(args.output_dir)
-                args.save(args.output_dir)
-                model.module.save_pretrained(args.output_dir)
-                # model.save_checkpoint(args.output_dir)
-                with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
-                    f.write(json.dumps(deepspeed_config, indent=5))     
+                save_model(model, tokenizer, config, args, deepspeed_config)
 
 
     if not args.do_train and args.do_eval:
@@ -827,86 +720,43 @@ if __name__ == "__main__":
         model.eval()
         targets = list(df_test["output"])
         test_sampler = SequentialSampler(test_dataset)
-        eval_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, sampler=test_sampler, collate_fn=test_collator, num_workers=8)
+        test_dataloader = DataLoader(test_dataset, batch_size=1, sampler=test_sampler, collate_fn=test_collator, num_workers=8)
         all_outputs = []
 
-        preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval.text")
+        preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval_{epoch}.text")
         print("\n*****    Evaluating  *****\n")
         eval_inputs_iter = []
-        for eval_step, eval_batch in enumerate(tqdm(eval_dataloader)):
+        for eval_step, eval_batch in enumerate(tqdm(test_dataloader)):
             eval_batch = eval_batch.to(device)
             eval_inputs_iter.extend(eval_batch["input_ids"])
-            max_length_this_batch = eval_batch["input_ids"].size(-1) if args.model_type == "decoder" else 0
             with torch.no_grad():
-                if "token_type_ids" in eval_batch:
-                    token_type_ids = eval_batch.pop("token_type_ids")
                 outputs = model.generate(
                     **eval_batch,
-                    num_beams=args.num_beams,
-                    top_k=args.top_k,
-                    top_p=args.top_p,
-                    early_stopping=True,
-                    # max_length=max_length_this_batch + args.max_length,
                     max_length=args.max_length,
-                    # length_penalty=2.0,
-                    repetition_penalty=1.0,
-                    num_return_sequences=1
-                    # stopping_criteria=StoppingCriteriaList([stop_criteria]
                 )
             outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
             all_outputs.extend(outputs)
-        eval_inputs_iter = [tokenizer.decode(e_id, skip_special_tokens=True, clean_up_tokenization_spaces=True) for e_id in eval_inputs_iter]
+        ins = tokenizer.batch_decode(eval_inputs_iter, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         # all_outputs
-        outs = [tokenizer.decode(o_id, skip_special_tokens=True, clean_up_tokenization_spaces=True) for o_id in all_outputs]
+        outs = tokenizer.batch_decode(all_outputs, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         preds_for_eval = []
-        all_answers = []
-        for index, o in enumerate(outs):
-            this_input = eval_inputs_iter[index]
-            if args.model_type == "decoder":
-                if this_input in o:
-                    answer = o.replace(this_input, "").strip().rstrip()
-                else:
-                    output_ids = all_outputs[index][args.max_seq_length: ]
-                    answer = tokenizer.decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-            else:
-                answer = o
-            answer = answer.strip().rstrip()
-            all_answers.append(answer)
+        all_answers = [output.replace(prompt, "").strip() for prompt, output in zip(ins, outs)]
 
+        for index, (input_prompt, answer) in enumerate(zip(ins, all_answers)):
             this_eval_instance = {
                 "index": index,
-                "input": this_input,
+                "input": input_prompt,
                 "output": answer, 
                 "target": targets[index],
             }
             preds_for_eval.append(this_eval_instance)
 
-        preds = []
-        golds = []
-        # confuse_index = len(emotional_label_dict)
-        # bad_case = []
-        confuse_case = []
-        for index, answer in enumerate(all_answers):
-            golds += [emotional_label_dict[targets[index]]]
-            match_res = match_text(answer, list(emotional_label_dict.keys()))
-            if match_res:
-                preds += [emotional_label_dict[match_res[0]]]
-            else:
-                preds += [emotional_label_dict[optimize_output(answer, list(emotional_label_dict.keys()))]]
-                confuse_case += [index]
-        
-        if len(preds) == len(all_answers):
-            score, res_matrix = report_score(dataset=args.dataset, golds=golds, preds=preds)
-            eval_score_list.append(score)
+        score, res_matrix = report_score(dataset=args.dataset, golds=targets, preds=all_answers)
+        print(f"##### Evaluation after Epoch {epoch} with F1: {score} #####")
 
         # statisics of model's output
-    
         with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
             f.write(json.dumps(score))
             f.write(f'\n{res_matrix}')
-            f.write(f'\nconfuse_case: {confuse_case}  \n')
-            f.write(f'\nThe num of confuse_case is : {len(confuse_case)} \n')
             f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
-
-    for i in eval_score_list:
-        print(i)
+            
