@@ -106,8 +106,9 @@ def process_dataset(dataset, window=20, speaker_task="True", predictions="True",
             windowed_inputs = generate_inputs(windowed_dialogs, emotional_labels)
             task = "window"
             if predictions == "True":
-                emotion_prediction = generate_emotion_prediction(windowed_dialogs, emotional_labels)
-                windowed_inputs = merge_inputs([windowed_inputs, emotion_prediction])
+                if stage == "train":
+                    emotion_prediction = generate_emotion_prediction(windowed_dialogs, emotional_labels)
+                    windowed_inputs = merge_inputs([windowed_inputs, emotion_prediction])
                 task = os.path.join("predict", task)
             path = save_dataset(windowed_inputs, dataset, stage, task)
 
@@ -137,7 +138,7 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-# args = argparse.Namespace(dataset='meld', historical_window=20, speaker_task='True', emotion_prediction='False', autoregressive_emotion='False')
+# args = argparse.Namespace(dataset='meld', historical_window=20, speaker_task='False', emotion_prediction='True', autoregressive_emotion='False')
 # os.chdir("./InstructERC")
 
 # Process data
