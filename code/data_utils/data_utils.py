@@ -10,6 +10,9 @@ from dataclasses import dataclass, asdict
 from transformers import StoppingCriteria
 from sklearn.utils import class_weight
 import numpy as np
+from pprint import pprint
+from transformers import LlamaTokenizer
+from typing import List
 
 
 
@@ -71,11 +74,12 @@ class Seq2SeqDataset(Dataset):
             self.examples = [[i[0], i[1], o] for i, o in zip(inputs, outputs)]
 
         outputs = [e[-1] for e in self.examples]
-        labels = list(set(outputs))
-        balancing = "balanced" if args.class_balancing else None
+        labels = np.array(list(set(outputs)))
+        balancing = "balanced" if args.class_balancing and not mode == "dev" else None
         class_weights = class_weight.compute_class_weight(balancing, classes=labels, y=outputs)
-        class_weights = class_weights * self.inv_sigmoid(class_weights, alpha = args.class_balancing_alpha)
+        class_weights = class_weights * self.inv_sigmoid(class_weights, alpha = float(args.class_balancing_alpha))
         self.class_weights = {l:w for l, w in zip(labels, class_weights)}
+        pprint(self.class_weights)
 
     def inv_sigmoid(self, x, alpha=1.0):
         return 2 - (1 / (0.5 + 0.5*np.exp(-alpha*x)))
@@ -106,139 +110,73 @@ class Seq2SeqCollator(object):
         return inputs
 
 
-def preprocess_data_batch(data, tokenizer, args):
+def preprocess_data_batch(data, tokenizer:LlamaTokenizer, args: "ModelArgs"):
     inputs = [d[0][0] for d in data]
     batch_sample_weights = [d[1] for d in data]
-    inputs_pred = None
+    targets = [d[0][-1] for d in data]
+    
+    inputs = tokenizer(
+        inputs,
+        max_length=args.max_length - 1,
+        truncation=True
+    )
+
+    targets = tokenizer(
+        targets,
+        add_special_tokens=False,
+    )
+    input_ids = inputs['input_ids']
+    target_ids = targets['input_ids']
+
+    pred_mask = [0] * len(input_ids)
     if args.emotion_prediction:
         inputs_pred = [d[0][1] for d in data]
-    targets = [d[0][-1] for d in data]
-
-    if args.model_type == "decoder":
-        if args.mode == "pretrain":
-            inputs = tokenizer(
-                inputs,
-                max_length=args.max_seq_length,
-                padding=True,
-                truncation=True,
-                return_tensors='pt'
-            )
-            labels = inputs['input_ids'].clone().contiguous()
-            labels[labels[:, :] == tokenizer.pad_token_id] = -100
-            type_token_ids = inputs['attention_mask'].long()
-            inputs['labels'] = labels
-            inputs["type_token_ids"] = type_token_ids
-            return inputs
-            
-        # decoder-only model
-        inputs = tokenizer(
-            inputs,
+        pred_inputs = tokenizer(
+            inputs_pred,
             max_length=args.max_length - 1,
             truncation=True
         )
+        pred_ids = pred_inputs["input_ids"]
+        pred_mask += [1] * len(pred_ids)
 
-        targets = tokenizer(
-            targets,
-            add_special_tokens=False,
-        )
-        input_ids = inputs['input_ids']
-        target_ids = targets['input_ids']
-        concat_input = [input_ids[i] + target_ids[i] for i in range(len(input_ids))]
-        concat_input = [c_[: args.max_length] for c_ in concat_input]
-        if not args.open_ended:
-            concat_input = [c_ids + [tokenizer.eos_token_id] for c_ids in concat_input]
+        input_ids += pred_ids
+        target_ids *= 2
 
-        type_token_ids = [[0] * len(input_ids[i]) + [1] * (len(concat_input[i]) - len(input_ids[i])) for i in range(len(input_ids))]
-        attention_mask = [[1] * len(concat_input[i]) for i in range(len(input_ids))]
-        
-        max_batch_length = 0
-        for i in range(len(input_ids)):
-            max_batch_length = max(max_batch_length, len(type_token_ids[i]))
-        
+    max_batch_length = max(list(map(lambda x: min(args.max_length, len(x[0]+x[1])+1), zip(input_ids, target_ids))))
 
+    batch_input_ids = []
+    batch_attention_masks = []
+    batch_labels = []
+    batch_type_token_ids = []
+    for input_ids_i, target_ids_i in zip(input_ids, target_ids):
+        concat:List[int] = (input_ids_i + target_ids_i)[:args.max_length-1] + [tokenizer.eos_token_id]
+        padding = [0] * (max_batch_length - len(concat))
+        type_ids = padding + ([0] * len(input_ids_i) + [1] * (len(target_ids_i)))[:args.max_length-1] + [1]
+        concat = padding + concat
 
-        if  args.emotion_prediction:
-            inputs_pred = tokenizer(
-                inputs_pred,
-                max_length=args.max_length - 1,
-                truncation=True
-            )
-            # The max_length parameter specifies the maximum length of the input text, but since Transformers models need to append a special [SEP] token at the end of the input text, the actual maximum length of the input text should be max_length-1.
-            input_pred_ids = inputs_pred['input_ids'] # Get the input_ids from the tokenizer outputs
-            concate_pred_input = [input_pred_ids[i] + target_ids[i] for i in range(len(input_pred_ids))] # Concatenate the target_ids to each sample
-            concate_pred_input = [c_[: args.max_length] for c_ in concate_pred_input] # Truncate to max length
-            if not args.open_ended:
-                concate_pred_input = [c_ids + [tokenizer.eos_token_id] for c_ids in concate_pred_input]
+        input_id = torch.Tensor(concat).long()
+        attention_mask = torch.ones_like(input_id).long()
+        attention_mask[input_id == 0] = 0
+        type_token_ids = torch.Tensor(type_ids).long()
+        labels = input_id.clone().contiguous().detach()
+        labels[type_token_ids == 0] = -100
 
-            pred_type_token_ids = [[0] * len(input_pred_ids[i]) + [1] * (len(concate_pred_input[i]) - len(input_pred_ids[i])) for i in range(len(input_pred_ids))]
-            pred_attention_mask = [[1] * len(concate_pred_input[i]) for i in range(len(input_pred_ids))]
+        batch_input_ids.append(input_id)
+        batch_attention_masks.append(attention_mask)
+        batch_type_token_ids.append(type_token_ids)
+        batch_labels.append(labels)
+                     
 
-            # max_batch_length = 0
-            for i in range(len(input_pred_ids)):
-                max_batch_length = max(max_batch_length, len(pred_type_token_ids[i]))
-
-        type_token_ids = [[0] * (max_batch_length - len(ids)) + ids for ids in type_token_ids]
-        attention_mask = [[0] * (max_batch_length - len(ids)) + ids for ids in attention_mask]
-        concat_input = [[tokenizer.pad_token_id] * (max_batch_length - len(ids)) + ids for ids in concat_input]
-        type_token_ids = torch.Tensor(type_token_ids).long()
-        attention_mask = torch.Tensor(attention_mask).long()
-        concat_input = torch.Tensor(concat_input).long()
-        labels = concat_input.clone().contiguous()
-        labels[type_token_ids[:, :] == 0] = -100
-
-        if args.emotion_prediction:
-            pred_type_token_ids = [[0] * (max_batch_length - len(ids)) + ids for ids in pred_type_token_ids]
-            pred_attention_mask = [[0] * (max_batch_length - len(ids)) + ids for ids in pred_attention_mask]
-            pred_concat_input = [[tokenizer.pad_token_id] * (max_batch_length -len(ids)) + ids for ids in concate_pred_input]
-            pred_type_token_ids = torch.Tensor(pred_type_token_ids).long()
-            pred_attention_mask = torch.Tensor(pred_attention_mask).long()
-            pred_concat_input = torch.Tensor(pred_concat_input).long()
-            pred_labels = pred_concat_input.clone().contiguous()
-            pred_labels[pred_type_token_ids[:, :] == 0] = -100
-
-            concat_input = torch.concat([concat_input, pred_concat_input], dim=0)
-            attention_mask = torch.concat([attention_mask, pred_attention_mask], dim=0)
-            type_token_ids = torch.concat([type_token_ids, pred_type_token_ids], dim=0)
-            labels = torch.concat([labels, pred_labels], dim=0)                    
-
-        batch_sample_weight = torch.mean(torch.Tensor(batch_sample_weights))
-        return {
-            "input_ids": concat_input,
-            "attention_mask": attention_mask,
-            "type_token_ids": type_token_ids,
-            "labels": labels,
-            "sample_weight": batch_sample_weight
-        }
-    else:
-        ## encoder-decoder model
-        inputs = tokenizer(
-            inputs,
-            max_length=args.max_seq_length,
-            truncation=True,
-            padding=True,
-            return_tensors='pt'
-        )
-        targets = tokenizer(
-            targets,
-            max_length=args.max_length,
-            truncation=True,
-            padding=True,
-            return_tensors='pt'
-        )
-        input_ids = inputs['input_ids']
-        target_ids = targets['input_ids']
-        attention_mask = torch.ones_like(input_ids)
-        attention_mask[input_ids[:, :] == tokenizer.pad_token_id] = 0
-        type_token_ids = torch.ones_like(target_ids)
-        type_token_ids[target_ids[:, :] == tokenizer.pad_token_id] = 0
-        labels = target_ids.clone().contiguous()
-        labels[target_ids[:, :] == tokenizer.pad_token_id] = -100
-        return {
-            "input_ids": torch.LongTensor(input_ids),
-            "labels": torch.LongTensor(labels),
-            "attention_mask": torch.LongTensor(attention_mask),
-            "type_token_ids": torch.LongTensor(type_token_ids)
-        }
+    batch_sample_weight = torch.mean(torch.Tensor(batch_sample_weights))
+    return {
+        "input_ids": torch.stack(batch_input_ids),
+        "attention_mask": torch.stack(batch_attention_masks),
+        "type_token_ids": torch.stack(batch_type_token_ids),
+        "labels": torch.stack(batch_labels),
+        "predict_mask": torch.Tensor(pred_mask).long(),
+        "sample_weight": batch_sample_weight
+    }
+    
 
 
 @dataclass
@@ -251,6 +189,7 @@ class ModelArgs:
     deepspeed_config = "./deepspeed_config.json"
     do_train: bool = True
     do_eval: bool = False
+    emotion_prediction: bool = False
     num_train_epochs = 10
     warmup_ratio: float = 0.1
     warmup_steps: int = None
