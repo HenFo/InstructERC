@@ -35,9 +35,6 @@
           "stage3_max_live_parameters": 1000000000.0,
           "stage3_max_reuse_distance": 1000000000.0,
           "stage3_gather_fp16_weights_on_model_save": true,
-          "offload_optimizer": {
-               "device": "cpu"
-          },
           "offload_param": {
                "device": "cpu"
           }

@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, SequentialSampler
 import numpy as np
 from data_utils.data_utils import *
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+from torch.optim import AdamW
 from peft import LoraConfig, get_peft_model, PeftModel
 import argparse
 from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
@@ -602,8 +603,9 @@ if args.do_train:
 
     optimizer_grouped_parameters = getOptimizerGroup(model=model)
 
-    optimizer_class = DeepSpeedCPUAdam if deepspeed_config["zero_optimization"]\
-        ["offload_optimizer"]["device"] == "cpu" else FusedAdam
+    # optimizer_class = DeepSpeedCPUAdam if deepspeed_config["zero_optimization"]\
+        # ["offload_optimizer"]["device"] == "cpu" else FusedAdam
+    optimizer_class = AdamW
     optimizer = optimizer_class(optimizer_grouped_parameters, lr=args.learning_rate, betas=[0.9, 0.95])
     lr_scheduler = get_linear_schedule_with_warmup(optimizer=optimizer, num_training_steps=t_total, num_warmup_steps=warmup_steps)
 
@@ -631,7 +633,7 @@ elif args.do_eval:
 
 if __name__ == "__main__":
     eval_score_list = []
-    emotional_label_dict, emotional_label_str = get_labels_attr(dataset=args.dataset)
+    # emotional_label_dict, emotional_label_str = get_labels_attr(dataset=args.dataset)
     if type(args.theta) == str:
         args.theta = torch.tensor(eval(args.theta))
         args.theta.to(device)
