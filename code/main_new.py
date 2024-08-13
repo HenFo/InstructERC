@@ -26,26 +26,26 @@ from sklearn.metrics import accuracy_score, f1_score
 
 
 # evaluation function for ERC
-def get_labels_attr(dataset):
-    label_list_set = {
-        'iemocap':['happy', 'sad', 'neutral', 'angry', 'excited', 'frustrated'],
-        'meld':['neutral', 'surprise', 'fear', 'sad', 'joyful', 'disgust', 'angry'],
-        'EmoryNLP': ['Joyful','Mad','Peaceful', 'Neutral','Sad','Powerful','Scared'],
-    }
-    label_str_set = {
-        'iemocap':"'happy', 'sad', 'neutral', 'angry', 'excited', 'frustrated'",
-        'meld':"'neutral', 'surprise', 'fear', 'sad', 'joyful', 'disgust', 'angry'",
-        'EmoryNLP': "'Joyful','Mad','Peaceful', 'Neutral','Sad','Powerful','Scared'",
-    }
+# def get_labels_attr(dataset):
+#     label_list_set = {
+#         'iemocap':['happy', 'sad', 'neutral', 'angry', 'excited', 'frustrated'],
+#         'meld':['neutral', 'surprise', 'fear', 'sad', 'joyful', 'disgust', 'angry'],
+#         'EmoryNLP': ['Joyful','Mad','Peaceful', 'Neutral','Sad','Powerful','Scared'],
+#     }
+#     label_str_set = {
+#         'iemocap':"'happy', 'sad', 'neutral', 'angry', 'excited', 'frustrated'",
+#         'meld':"'neutral', 'surprise', 'fear', 'sad', 'joyful', 'disgust', 'angry'",
+#         'EmoryNLP': "'Joyful','Mad','Peaceful', 'Neutral','Sad','Powerful','Scared'",
+#     }
 
-    emotional_label_dict = {text_label:num_label for num_label, text_label in enumerate(label_list_set[dataset])}
-    emotional_label_str = label_str_set[dataset]
-    return emotional_label_dict, emotional_label_str
+#     emotional_label_dict = {text_label:num_label for num_label, text_label in enumerate(label_list_set[dataset])}
+#     emotional_label_str = label_str_set[dataset]
+#     return emotional_label_dict, emotional_label_str
 
 
 def report_score(dataset, golds, preds, mode='test'):
     if dataset == 'iemocap':
-        target_names = ['hap', 'sad', 'neu', 'ang', 'exc', 'fru']
+        target_names = ["neutral", "angry", "frustrated", "happy", "excited", "sad"]
         digits = 6
     elif dataset == 'meld':
         target_names = ["neutral", "surprise", "anger", "joy", "sadness", "fear", "disgust"]

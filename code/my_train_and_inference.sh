@@ -13,8 +13,8 @@ MODEL_NAME='LLaMA2'
 Experiments_setting='lora'
 
 # select the dataset
-# dataset='iemocap'
-dataset='meld'
+dataset='iemocap'
+# dataset='meld'
 # dataset='EmoryNLP'
 
 # select the historical window for dataset
@@ -149,7 +149,7 @@ fi
 echo "******************************************************************************************"
 echo "Process data"
 echo "******************************************************************************************"
-SPEAKER_DATA_PATH=$(python ./code/process_meld.py \
+SPEAKER_DATA_PATH=$(python ./code/process_dataset.py \
     --dataset ${dataset} \
     --historical_window ${historical_window} \
     --speaker_task True \
@@ -164,7 +164,7 @@ else
     echo "Data procession script encountered an error."
 fi
 
-EMOTION_DATA_PATH=$(python ./code/process_meld.py \
+EMOTION_DATA_PATH=$(python ./code/process_dataset.py \
     --dataset ${dataset} \
     --historical_window ${historical_window} \
     --speaker_task None \
@@ -178,6 +178,7 @@ if [ $? -eq 0 ]; then
 else
     echo "Data procession script encountered an error."
 fi
+# exit 0
 
 DATA_SPEAKER_PATH=$(echo "$SPEAKER_DATA_PATH" | cut -d ',' -f 1)
 DATA_WINDOW_PATH=$(echo "$EMOTION_DATA_PATH" | cut -d ',' -f 2)
@@ -223,7 +224,7 @@ then
         --do_eval ${DO_EVAL} \
         --statistic_mode False
         # --checkpoint_dir ${CHECKPOINT_DIR}
-
+    exit 0
     echo "*******************************************************************"
     echo "Speaker Identification task has been achieved successfully!"
     echo "*******************************************************************"
