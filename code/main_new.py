@@ -47,7 +47,7 @@ def report_score(dataset, golds, preds, mode='test'):
         target_names = ['hap', 'sad', 'neu', 'ang', 'exc', 'fru']
         digits = 6
     elif dataset == 'meld':
-        target_names = ['neutral', 'surprise', 'fear', 'sad', 'joyful', 'disgust', 'angry']
+        target_names = ["neutral", "surprise", "anger", "joy", "sadness", "fear", "disgust"]
         digits = 7
     elif dataset == 'EmoryNLP':
         target_names = ['Joyful','Mad','Peaceful', 'Neutral','Sad','Powerful','Scared']
