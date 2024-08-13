@@ -56,7 +56,7 @@ def report_score(dataset, golds, preds, mode='test'):
 
     res = {}
     res['Acc_SA'] = accuracy_score(golds, preds)
-    res['F1_SA'] = f1_score(golds, preds, average='weighted', labels=target_names)
+    res['F1_SA'] = f1_score(golds, preds, average='weighted', labels=target_names, zero_division=0.0)
     res['mode'] = mode
     for k, v in res.items():
         if isinstance(v, float):
@@ -67,6 +67,7 @@ def report_score(dataset, golds, preds, mode='test'):
     return res, res_matrix     
 
 def save_model(model, tokenizer, config, args, deepspeed_config): 
+    print("#### Saving Model ####")
     tokenizer.save_pretrained(args.output_dir)
     config.save_pretrained(args.output_dir)
     args.save(args.output_dir)
@@ -310,6 +311,12 @@ parser.add_argument(
     help="reduce distance between class weights"
 )
 
+parser.add_argument(
+    "--fraction_neutral",
+    default=1.0,
+    help="take a fraction of neutral targets for training"
+)
+
 args = parser.parse_args()
 do_sample = args.top_k is not None or args.top_p is not None or args.num_beams > 1 or args.temp is not None
 '''
@@ -386,7 +393,8 @@ model_args = {
     "gradient_checkpointing": args.gradient_checkpointing,
     "data_percent": args.data_percent,
     "class_balancing": args.class_balancing,
-    "class_balancing_alpha": args.class_balancing_alpha
+    "class_balancing_alpha": args.class_balancing_alpha,
+    "fraction_neutral": args.fraction_neutral
 }
 args = ModelArgs()
 # pdb.set_trace()
@@ -495,18 +503,21 @@ def _get_input_dict(batch):
         "attention_mask": attention_mask.to(device)
     }
 def _get_input_dict_emotion(batch):
-    input_ids, labels, attention_mask, type_token_ids = batch["input_ids"], \
-        batch["labels"], batch["attention_mask"], batch["type_token_ids"]
+    input_ids, labels, attention_mask, predict_mask = batch["input_ids"], \
+        batch["labels"], batch["attention_mask"], batch["predict_mask"]
+    
     normal =  {
-        "input_ids": input_ids[0::2].to(device),
-        "labels": labels[0::2].to(device),
-        "attention_mask": attention_mask[0::2].to(device)
+        "input_ids": input_ids[predict_mask == 0].to(device),
+        "labels": labels[predict_mask == 0].to(device),
+        "attention_mask": attention_mask[predict_mask == 0].to(device)
     }
+
     emotion_pred = {
-        "input_ids": input_ids[1::2].to(device),
-        "labels": labels[1::2].to(device),
-        "attention_mask": attention_mask[1::2].to(device)
+        "input_ids": input_ids[predict_mask == 1].to(device),
+        "labels": labels[predict_mask == 1].to(device),
+        "attention_mask": attention_mask[predict_mask == 1].to(device)
     }
+    
 
     return normal, emotion_pred
 
@@ -702,7 +713,7 @@ if __name__ == "__main__":
                 # statisics of model's output
                 with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
                     f.write(json.dumps(score))
-                    f.write(f'\n{res_matrix}')
+                    f.write(f'\n{res_matrix}\n\n')
                     f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
 
                 if best_f1_score < score['F1_SA']:
@@ -723,7 +734,7 @@ if __name__ == "__main__":
         test_dataloader = DataLoader(test_dataset, batch_size=1, sampler=test_sampler, collate_fn=test_collator, num_workers=8)
         all_outputs = []
 
-        preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval_{epoch}.text")
+        preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval.text")
         print("\n*****    Evaluating  *****\n")
         eval_inputs_iter = []
         for eval_step, eval_batch in enumerate(tqdm(test_dataloader)):
@@ -752,11 +763,11 @@ if __name__ == "__main__":
             preds_for_eval.append(this_eval_instance)
 
         score, res_matrix = report_score(dataset=args.dataset, golds=targets, preds=all_answers)
-        print(f"##### Evaluation after Epoch {epoch} with F1: {score} #####")
+        print(f"##### Evaluation F1: {score} #####")
 
         # statisics of model's output
         with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
             f.write(json.dumps(score))
-            f.write(f'\n{res_matrix}')
+            f.write(f'\n{res_matrix}\n\n')
             f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
             

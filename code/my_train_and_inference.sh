@@ -7,11 +7,7 @@ FLAG=1
 # The hyperparameter you need setting: 1.MODEL_NAME, 2.Experiments_setting, 3.dataset, 4.accumulations, 5.graphics_card
 
 # select basemodel
-# MODEL_NAME='ChatGLM'
-# MODEL_NAME='ChatGLM2'
-# MODEL_NAME='LLaMA'
 MODEL_NAME='LLaMA2'
-# MODEL_NAME='Bloom-560m'
 
 # select the experiment's model
 Experiments_setting='lora'
@@ -25,7 +21,7 @@ dataset='meld'
 # LLaMA 's context = 1024 is enough for almost dataset, except for iemocap.
 # IEMOCAP has very long conversation sample, 
 # the historical window is designed for this kind of long conversation.
-historical_window=20
+historical_window=10
 
 # set the accumulation and card when backwarding and inferring
 accumulations=16
@@ -133,9 +129,9 @@ then
     DO_EVAL=True
     DO_TRAIN=True
     LORA=True
-    LORA_DROP=0.05
-    LORA_RANK=8
-    LR=1e-4
+    LORA_DROP=0.1
+    LORA_RANK=16
+    LR=2e-4
     CHECKPOINT_DIR=None
     echo "Your choose ${Experiments_setting}! The experiment will be set as LORA model"
 elif [ ${Experiments_setting} = 'all_parameters' ]
@@ -245,8 +241,8 @@ then
         --batch_size ${BS} \
         --deepspeed_config ./code/data_utils/deepspeed_config.json \
         --gradient_accumulation_steps ${accumulations} \
-        --eval_batch_size 8 \
-        --num_train_epochs 8 \
+        --eval_batch_size 1 \
+        --num_train_epochs 10 \
         --save_steps 100000 \
         --lora ${LORA} \
         --lora_dropout ${LORA_DROP} \
@@ -256,8 +252,11 @@ then
         --do_train ${DO_TRAIN} \
         --statistic_mode True \
         --beta 0.1 \
-        --theta 1.0 \
         --emotion_prediction True \
+        --class_balancing False \
+        --class_balancing_alpha 0 \
+        --data_percent ${data_percent} \
+        --fraction_neutral 1 \
         --checkpoint_dir ${Speaker_Model_output_dir}
     
     

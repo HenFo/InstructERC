@@ -13,6 +13,9 @@ import numpy as np
 from pprint import pprint
 from transformers import LlamaTokenizer
 from typing import List
+import random
+
+from collections import Counter
 
 
 
@@ -62,7 +65,7 @@ class Seq2SeqDataset(Dataset):
         if not args.emotion_prediction:
             inputs = list(data["input"])
             outputs = list(data['output'])
-            self.examples = [[i, o] for i, o in zip(inputs, outputs)]
+            self.examples = [[i, o] for i, o in zip(inputs, outputs) if o != "neutral" or random.random() < float(args.fraction_neutral)]
         elif mode == 'dev':
             inputs = list(data["input"])
             outputs = list(data['output'])
@@ -71,7 +74,7 @@ class Seq2SeqDataset(Dataset):
             inputs = list(data["input"])
             inputs = [i.split('***') for i in inputs]
             outputs = list(data['output'])
-            self.examples = [[i[0], i[1], o] for i, o in zip(inputs, outputs)]
+            self.examples = [[i[0], i[1], o] for i, o in zip(inputs, outputs) if o != "neutral" or random.random() < float(args.fraction_neutral)]
 
         outputs = [e[-1] for e in self.examples]
         labels = np.array(list(set(outputs)))
@@ -79,7 +82,8 @@ class Seq2SeqDataset(Dataset):
         class_weights = class_weight.compute_class_weight(balancing, classes=labels, y=outputs)
         class_weights = class_weights * self.inv_sigmoid(class_weights, alpha = float(args.class_balancing_alpha))
         self.class_weights = {l:w for l, w in zip(labels, class_weights)}
-        pprint(self.class_weights)
+        
+        print(Counter(outputs))
 
     def inv_sigmoid(self, x, alpha=1.0):
         return 2 - (1 / (0.5 + 0.5*np.exp(-alpha*x)))
@@ -221,6 +225,7 @@ class ModelArgs:
     gradient_checkpointing: bool = False
     class_balancing: bool = False
     class_balancing_alpha: float = 0.2
+    fraction_neutral: float = 1.0
 
     def save(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)
