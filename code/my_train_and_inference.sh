@@ -7,7 +7,7 @@ FLAG=1
 # The hyperparameter you need setting: 1.MODEL_NAME, 2.Experiments_setting, 3.dataset, 4.accumulations, 5.graphics_card
 
 # select basemodel
-MODEL_NAME='LLaMA2'
+MODEL_NAME='LLaMA2-base'
 
 # select the experiment's model
 Experiments_setting='lora'
@@ -21,7 +21,7 @@ dataset='iemocap'
 # LLaMA 's context = 1024 is enough for almost dataset, except for iemocap.
 # IEMOCAP has very long conversation sample, 
 # the historical window is designed for this kind of long conversation.
-historical_window=10
+historical_window=12
 
 # set the accumulation and card when backwarding and inferring
 accumulations=16
@@ -67,7 +67,7 @@ echo "data_percent: ${data_percent}"
 
 # Notes: bloom-560 is convenient for debugging
 case ${MODEL_NAME} in
-'ChatGLM'|'ChatGLM2'|'LLaMA'|'LLaMA2'|'Bloom-560m')
+'LLaMA2'|'LLaMA2-base')
     case ${Experiments_setting} in
     'lora'|'all_parameters')
         case ${dataset} in
@@ -115,12 +115,9 @@ echo "Your choose ${dataset}! The max_context_length will be set as ${MAX_LENGTH
 echo "******************************************************************************************"
 
 
-if [ ${MODEL_NAME} = 'LLaMA2' ]
-then
-    MODEL_PATH='/home/fock/code/InstructERC/LLM_bases/LLaMA2'
-else
-    echo "Your choose is not in MY candidations! Please check your Model name!"
-fi
+
+MODEL_PATH='/home/fock/code/InstructERC/LLM_bases/'$MODEL_NAME
+
 echo "Your choose ${MODEL_NAME}! Model Parameters should be initialized in the path \n ${MODEL_PATH}"
 
 
@@ -178,7 +175,6 @@ if [ $? -eq 0 ]; then
 else
     echo "Data procession script encountered an error."
 fi
-# exit 0
 
 DATA_SPEAKER_PATH=$(echo "$SPEAKER_DATA_PATH" | cut -d ',' -f 1)
 DATA_WINDOW_PATH=$(echo "$EMOTION_DATA_PATH" | cut -d ',' -f 2)
@@ -198,7 +194,7 @@ echo "*********************************************"
 echo "Content_Model_output_dir: $Content_Model_output_dir"
 echo "*********************************************"
 
-# FLAG=0
+echo $FLAG
 
 if [ ${FLAG} -eq 1 ];
 then
@@ -224,7 +220,7 @@ then
         --do_eval ${DO_EVAL} \
         --statistic_mode False
         # --checkpoint_dir ${CHECKPOINT_DIR}
-    exit 0
+
     echo "*******************************************************************"
     echo "Speaker Identification task has been achieved successfully!"
     echo "*******************************************************************"
@@ -278,3 +274,5 @@ then
         --do_train False \
         --statistic_mode True
 fi
+
+echo test2
