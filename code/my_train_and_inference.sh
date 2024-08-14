@@ -194,7 +194,6 @@ echo "*********************************************"
 echo "Content_Model_output_dir: $Content_Model_output_dir"
 echo "*********************************************"
 
-echo $FLAG
 
 if [ ${FLAG} -eq 1 ];
 then
@@ -239,7 +238,7 @@ then
         --deepspeed_config ./code/data_utils/deepspeed_config.json \
         --gradient_accumulation_steps ${accumulations} \
         --eval_batch_size 1 \
-        --num_train_epochs 10 \
+        --num_train_epochs 15 \
         --save_steps 100000 \
         --lora ${LORA} \
         --lora_dropout ${LORA_DROP} \
@@ -261,18 +260,11 @@ then
     echo "Start Evaluation!"
     echo "*********************************************"
 
-    deepspeed --master_port=29500 ./code/main_new.py \
+    python ./code/eval.py \
         --dataset ${dataset} \
         --model_name_or_path ${MODEL_PATH} \
         --data_dir ${DATA_WINDOW_PATH} \
         --output_dir ${Content_Model_output_dir} \
         --max_length ${MAX_LENGTH} \
-        --deepspeed_config ${Content_Model_output_dir}/deepspeed_config.json \
-        --lora True \
-        --eval_batch_size 1 \
-        --do_eval True \
-        --do_train False \
-        --statistic_mode True
+        --eval_batch_size 1
 fi
-
-echo test2

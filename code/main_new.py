@@ -675,7 +675,7 @@ if __name__ == "__main__":
 
             # model starts evaluation
             model.eval()
-            targets = list(df_dev["output"])
+            targets = list(df_test["output"])
             eval_sampler = SequentialSampler(dev_dataset)
             eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=eval_sampler, collate_fn=dev_collator, num_workers=8)
             all_outputs = []
@@ -728,48 +728,48 @@ if __name__ == "__main__":
                 save_model(model, tokenizer, config, args, deepspeed_config)
 
 
-    if not args.do_train and args.do_eval:
-        # model starts to evaluation
-        model.eval()
-        targets = list(df_test["output"])
-        test_sampler = SequentialSampler(test_dataset)
-        test_dataloader = DataLoader(test_dataset, batch_size=1, sampler=test_sampler, collate_fn=test_collator, num_workers=8)
-        all_outputs = []
+    # if not args.do_train and args.do_eval:
+    #     # model starts to evaluation
+    #     model.eval()
+    #     targets = list(df_test["output"])
+    #     test_sampler = SequentialSampler(test_dataset)
+    #     test_dataloader = DataLoader(test_dataset, batch_size=1, sampler=test_sampler, collate_fn=test_collator, num_workers=8)
+    #     all_outputs = []
 
-        preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval.text")
-        print("\n*****    Evaluating  *****\n")
-        eval_inputs_iter = []
-        for eval_step, eval_batch in enumerate(tqdm(test_dataloader)):
-            eval_batch = eval_batch.to(device)
-            eval_inputs_iter.extend(eval_batch["input_ids"])
-            with torch.no_grad():
-                outputs = model.generate(
-                    **eval_batch,
-                    max_length=args.max_length,
-                )
-            outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
-            all_outputs.extend(outputs)
-        ins = tokenizer.batch_decode(eval_inputs_iter, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-        # all_outputs
-        outs = tokenizer.batch_decode(all_outputs, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-        preds_for_eval = []
-        all_answers = [output.replace(prompt, "").strip() for prompt, output in zip(ins, outs)]
+    #     preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval.text")
+    #     print("\n*****    Evaluating  *****\n")
+    #     eval_inputs_iter = []
+    #     for eval_step, eval_batch in enumerate(tqdm(test_dataloader)):
+    #         eval_batch = eval_batch.to(device)
+    #         eval_inputs_iter.extend(eval_batch["input_ids"])
+    #         with torch.no_grad():
+    #             outputs = model.generate(
+    #                 **eval_batch,
+    #                 max_length=args.max_length,
+    #             )
+    #         outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
+    #         all_outputs.extend(outputs)
+    #     ins = tokenizer.batch_decode(eval_inputs_iter, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+    #     # all_outputs
+    #     outs = tokenizer.batch_decode(all_outputs, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+    #     preds_for_eval = []
+    #     all_answers = [output.replace(prompt, "").strip() for prompt, output in zip(ins, outs)]
 
-        for index, (input_prompt, answer) in enumerate(zip(ins, all_answers)):
-            this_eval_instance = {
-                "index": index,
-                "input": input_prompt,
-                "output": answer, 
-                "target": targets[index],
-            }
-            preds_for_eval.append(this_eval_instance)
+    #     for index, (input_prompt, answer) in enumerate(zip(ins, all_answers)):
+    #         this_eval_instance = {
+    #             "index": index,
+    #             "input": input_prompt,
+    #             "output": answer, 
+    #             "target": targets[index],
+    #         }
+    #         preds_for_eval.append(this_eval_instance)
 
-        score, res_matrix = report_score(dataset=args.dataset, golds=targets, preds=all_answers)
-        print(f"##### Evaluation F1: {score} #####")
+    #     score, res_matrix = report_score(dataset=args.dataset, golds=targets, preds=all_answers)
+    #     print(f"##### Evaluation F1: {score} #####")
 
-        # statisics of model's output
-        with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
-            f.write(json.dumps(score))
-            f.write(f'\n{res_matrix}\n\n')
-            f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
+    #     # statisics of model's output
+    #     with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
+    #         f.write(json.dumps(score))
+    #         f.write(f'\n{res_matrix}\n\n')
+    #         f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
             
