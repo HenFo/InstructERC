@@ -676,8 +676,8 @@ if __name__ == "__main__":
             # model starts evaluation
             model.eval()
             targets = list(df_test["output"])
-            eval_sampler = SequentialSampler(dev_dataset)
-            eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=eval_sampler, collate_fn=dev_collator, num_workers=8)
+            eval_sampler = SequentialSampler(test_dataset)
+            eval_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, sampler=eval_sampler, collate_fn=test_collator, num_workers=8)
             all_outputs = []
 
             preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval_{epoch}.text")
